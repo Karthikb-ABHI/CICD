@@ -5,7 +5,7 @@ pool:
   name: 'MTPre'   # Replace with your agent pool name
 
 variables:
-  appPoolName: 'healthinsurance'
+  appPoolName: 'CICDTest'
   deployPath: 'E:\Deployedprojects\CICDTest'
   backupPath: 'E:\Deployments\backup\CICDTest'
   publishOutput: '$(Build.ArtifactStagingDirectory)\publish'
