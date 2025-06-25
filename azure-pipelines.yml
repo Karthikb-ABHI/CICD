@@ -2,7 +2,7 @@ trigger:
 - main
 
 pool:
-  name: 'MTPreWEB'   # Replace with your agent pool name
+  name: 'MTPre'   # Replace with your agent pool name
 
 variables:
   appPoolName: 'healthinsurance'
