@@ -2,7 +2,7 @@ trigger:
 - main
 
 pool:
-  name: 'SelfHostedWindows'  # 👈 Change this to your agent pool name
+  name: 'MTPreWEB'  # 👈 Change this to your agent pool name
 
 variables:
   appPoolName: 'healthinsurance'
