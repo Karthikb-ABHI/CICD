@@ -4,6 +4,9 @@ jobs:
   pool:
     name: 'MTPre'  # Use your actual agent pool name
 
+  variables:
+    publishOutput: '$(Build.ArtifactStagingDirectory)\publish'
+
   steps:
     - checkout: self
       clean: true
@@ -36,3 +39,10 @@ jobs:
         command: 'publish'
         publishWebProjects: true
         arguments: '--configuration Release --output $(publishOutput)'
+
+    - task: PublishBuildArtifacts@1
+      displayName: Upload Artifact
+      inputs:
+        pathToPublish: '$(publishOutput)'
+        artifactName: 'drop'
+        publishLocation: 'Container'
