@@ -7,15 +7,15 @@ jobs:
 #    clean: true
     
   steps:
-    - task: UseDotNet@2
-      inputs:
-        packageType: 'sdk'
-        version: '8.0.400'
+- task: UseDotNet@2
+  inputs:
+    packageType: 'sdk'
+    version: '8.0.400'   # Installed version
 
-    - task: UseDotNet@2
-      inputs:
-        packageType: 'sdk'
-        version: '6.0.406'
+- task: UseDotNet@2
+  inputs:
+    packageType: 'sdk'
+    version: '6.0.406'   # Installed version
 
     - task: NuGetCommand@2
       inputs:
