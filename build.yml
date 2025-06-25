@@ -1,0 +1,29 @@
+jobs:
+- job: BuildJob
+  displayName: Build .NET Core Application
+  steps:
+    - task: UseDotNet@2
+      inputs:
+        packageType: 'sdk'
+        version: '8.x.x'
+
+    - task: UseDotNet@2
+      inputs:
+        packageType: 'sdk'
+        version: '6.x.x'
+
+    - task: NuGetCommand@2
+      inputs:
+        command: 'restore'
+        restoreSolution: '**/*.sln'
+
+    - task: VSBuild@1
+      inputs:
+        solution: '**/*.sln'
+        configuration: 'Release'
+
+    - task: DotNetCoreCLI@2
+      inputs:
+        command: 'publish'
+        publishWebProjects: true
+        arguments: '--configuration Release --output $(publishOutput)'
