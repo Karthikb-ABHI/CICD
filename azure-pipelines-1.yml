@@ -1,0 +1,130 @@
+trigger:
+- main
+
+pool:
+  name: 'SelfHostedWindows'  # 👈 Change this to your agent pool name
+
+variables:
+  appPoolName: 'healthinsurance'
+  deployPath: 'E:\Deployedprojects\CICDTest'
+  backupPath: 'E:\Deployments\backup\CICDTest'
+  publishOutput: '$(Build.ArtifactStagingDirectory)\publish'
+
+stages:
+- stage: BuildAndDeploy
+  jobs:
+  - job: DeployJob
+    steps:
+
+    - task: UseDotNet@2
+      inputs:
+        packageType: 'sdk'
+        version: '8.x.x'
+
+    - task: UseDotNet@2
+      inputs:
+        packageType: 'sdk'
+        version: '6.x.x'
+
+    - task: NuGetCommand@2
+      inputs:
+        command: 'restore'
+        restoreSolution: '**/*.sln'
+
+    - task: VSBuild@1
+      inputs:
+        solution: '**/*.sln'
+        configuration: 'Release'
+
+    - task: DotNetCoreCLI@2
+      inputs:
+        command: 'publish'
+        publishWebProjects: true
+        arguments: '--configuration Release --output $(publishOutput)'
+
+    - task: PowerShell@2
+      displayName: Backup App Folder
+      inputs:
+        targetType: 'inline'
+        script: |
+          if (Test-Path "$(deployPath)") {
+            Copy-Item -Recurse -Force "$(deployPath)" "$(backupPath)_$(Build.BuildId)"
+          }
+
+    - task: PowerShell@2
+      displayName: Stop App Pool
+      inputs:
+        targetType: 'inline'
+        script: |
+          Stop-WebAppPool -Name "$(appPoolName)"
+
+    - task: PowerShell@2
+      displayName: Kill Suspended w3wp.exe
+      inputs:
+        targetType: 'inline'
+        script: |
+          Get-WmiObject Win32_Process -Filter "Name = 'w3wp.exe'" |
+            Where-Object { $_.CommandLine -like "*$(appPoolName)*" } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
+    - task: PowerShell@2
+      displayName: Deploy to IIS
+      inputs:
+        targetType: 'inline'
+        script: |
+          Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
+          Copy-Item -Recurse -Force "$(publishOutput)\*" "$(deployPath)\"
+
+    - task: PowerShell@2
+      displayName: Start App Pool + Verify
+      inputs:
+        targetType: 'inline'
+        script: |
+          Start-WebAppPool -Name "$(appPoolName)"
+          Start-Sleep -Seconds 10
+          $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
+          if ($status -ne "Started") {
+            Write-Error "App Pool failed to start"
+          }
+
+- stage: Rollback
+  dependsOn: BuildAndDeploy
+  condition: failed()
+  jobs:
+  - job: RollbackJob
+    steps:
+
+    - task: PowerShell@2
+      displayName: Stop App Pool
+      inputs:
+        targetType: 'inline'
+        script: |
+          Stop-WebAppPool -Name "$(appPoolName)"
+
+    - task: PowerShell@2
+      displayName: Kill Suspended w3wp.exe
+      inputs:
+        targetType: 'inline'
+        script: |
+          Get-WmiObject Win32_Process -Filter "Name = 'w3wp.exe'" |
+            Where-Object { $_.CommandLine -like "*$(appPoolName)*" } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
+    - task: PowerShell@2
+      displayName: Restore from Backup
+      inputs:
+        targetType: 'inline'
+        script: |
+          Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
+          Copy-Item -Recurse -Force "$(backupPath)_$(Build.BuildId)\*" "$(deployPath)\"
+
+    - task: PowerShell@2
+      displayName: Start App Pool + Verify
+      inputs:
+        targetType: 'inline'
+        script: |
+          Start-WebAppPool -Name "$(appPoolName)"
+          Start-Sleep -Seconds 10
+          $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
+          if ($status -ne "Started") {
+            Write-Error "Rollback failed. Manual intervention required."
