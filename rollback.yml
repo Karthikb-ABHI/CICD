@@ -1,0 +1,38 @@
+jobs:
+- job: RollbackJob
+  displayName: Rollback if Deployment Fails
+  steps:
+    - task: PowerShell@2
+      displayName: Stop App Pool
+      inputs:
+        targetType: 'inline'
+        script: |
+          Stop-WebAppPool -Name "$(appPoolName)"
+
+    - task: PowerShell@2
+      displayName: Kill Suspended w3wp.exe
+      inputs:
+        targetType: 'inline'
+        script: |
+          Get-WmiObject Win32_Process -Filter "Name = 'w3wp.exe'" |
+            Where-Object { $_.CommandLine -like "*$(appPoolName)*" } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
+    - task: PowerShell@2
+      displayName: Restore Backup
+      inputs:
+        targetType: 'inline'
+        script: |
+          Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
+          Copy-Item -Recurse -Force "$(backupPath)_$(Build.BuildId)\*" "$(deployPath)\"
+
+    - task: PowerShell@2
+      displayName: Start App Pool + Verify
+      inputs:
+        targetType: 'inline'
+        script: |
+          Start-WebAppPool -Name "$(appPoolName)"
+          Start-Sleep -Seconds 10
+          $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
+          if ($status -ne "Started") {
+            Write-Error "Rollback failed. Manual intervention required."
