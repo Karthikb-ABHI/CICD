@@ -1,6 +1,7 @@
 jobs:
 - job: BuildJob
   displayName: Build .NET Core Application
+  
   steps:
   - checkout: self
     clean: true
