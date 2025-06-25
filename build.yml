@@ -1,21 +1,22 @@
 jobs:
 - job: BuildJob
   displayName: Build .NET Core Application
-  
-  #steps:
-#  - checkout: self
-#    clean: true
-    
-  steps:
-- task: UseDotNet@2
-  inputs:
-    packageType: 'sdk'
-    version: '8.0.400'   # Installed version
+  pool:
+    name: 'MTPre'  # Use your actual agent pool name
 
-- task: UseDotNet@2
-  inputs:
-    packageType: 'sdk'
-    version: '6.0.406'   # Installed version
+  steps:
+    - checkout: self
+      clean: true
+
+    - task: UseDotNet@2
+      inputs:
+        packageType: 'sdk'
+        version: '8.0.400'   # Installed version
+
+    - task: UseDotNet@2
+      inputs:
+        packageType: 'sdk'
+        version: '6.0.406'   # Installed version
 
     - task: NuGetCommand@2
       inputs:
