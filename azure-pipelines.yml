@@ -1,34 +1,31 @@
-# ASP.NET Core (.NET Framework)
-# Build and test ASP.NET Core projects targeting the full .NET Framework.
-# Add steps that publish symbols, save build artifacts, and more:
-# https://docs.microsoft.com/azure/devops/pipelines/languages/dotnet-core
-
 trigger:
-- master
+- main
 
 pool:
-  vmImage: 'windows-latest'
+  name: 'SelfHostedWindows'   # Replace with your agent pool name
 
 variables:
-  solution: '**/*.sln'
-  buildPlatform: 'Any CPU'
-  buildConfiguration: 'Release'
+  appPoolName: 'healthinsurance'
+  deployPath: 'E:\Deployedprojects\CICDTest'
+  backupPath: 'E:\Deployments\backup\CICDTest'
+  publishOutput: '$(Build.ArtifactStagingDirectory)\publish'
 
-steps:
-- task: NuGetToolInstaller@1
+stages:
+- stage: Build
+  displayName: Build Stage
+  jobs:
+  - template: build.yml
 
-- task: NuGetCommand@2
-  inputs:
-    restoreSolution: '$(solution)'
+- stage: Deploy
+  displayName: Deploy Stage
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+  - template: deploy.yml
 
-- task: VSBuild@1
-  inputs:
-    solution: '$(solution)'
-    msbuildArgs: '/p:DeployOnBuild=true /p:WebPublishMethod=Package /p:PackageAsSingleFile=true /p:SkipInvalidConfigurations=true /p:DesktopBuildPackageLocation="$(build.artifactStagingDirectory)\WebApp.zip" /p:DeployIisAppPath="Default Web Site"'
-    platform: '$(buildPlatform)'
-    configuration: '$(buildConfiguration)'
-
-- task: VSTest@2
-  inputs:
-    platform: '$(buildPlatform)'
-    configuration: '$(buildConfiguration)'
+- stage: Rollback
+  displayName: Rollback Stage
+  dependsOn: Deploy
+  condition: failed()
+  jobs:
+  - template: rollback.yml
