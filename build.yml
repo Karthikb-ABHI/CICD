@@ -17,12 +17,15 @@ jobs:
         command: 'restore'
         restoreSolution: '**/*.sln'
 
-    - task: VSBuild@1
+    - task: DotNetCoreCLI@2
+      displayName: Build Project
       inputs:
-        solution: '**/*.sln'
-        configuration: 'Release'
+        command: 'build'
+        projects: '**/*.csproj'
+        arguments: '--configuration Release'
 
     - task: DotNetCoreCLI@2
+      displayName: Publish Project
       inputs:
         command: 'publish'
         publishWebProjects: true
