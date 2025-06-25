@@ -16,7 +16,10 @@ jobs:
       inputs:
         targetType: 'inline'
         script: |
-          Stop-WebAppPool -Name "$(appPoolName)"
+          $state = (Get-WebAppPoolState -Name "$(appPoolName)").Value
+          if ($state -ne "Stopped") {
+            Stop-WebAppPool -Name "$(appPoolName)"
+          }
 
     - task: PowerShell@2
       displayName: Kill Suspended w3wp.exe
@@ -24,7 +27,7 @@ jobs:
         targetType: 'inline'
         script: |
           Get-WmiObject Win32_Process -Filter "Name = 'w3wp.exe'" |
-            Where-Object { $_.CommandLine -like "*$(appPoolName)*" } |
+            Where-Object { $_.CommandLine -and $_.CommandLine -like "*$(appPoolName)*" } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
     - task: PowerShell@2
@@ -32,8 +35,12 @@ jobs:
       inputs:
         targetType: 'inline'
         script: |
-          Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
-          Copy-Item -Recurse -Force "$(publishOutput)\*" "$(deployPath)\"
+          if (Test-Path "$(publishOutput)") {
+            Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
+            Copy-Item -Recurse -Force "$(publishOutput)\*" "$(deployPath)\"
+          } else {
+            Write-Error "Publish output path '$(publishOutput)' does not exist!"
+          }
 
     - task: PowerShell@2
       displayName: Start App Pool + Verify
@@ -45,3 +52,6 @@ jobs:
           $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
           if ($status -ne "Started") {
             Write-Error "App Pool failed to start"
+          } else {
+            Write-Host "App Pool started successfully"
+          }
