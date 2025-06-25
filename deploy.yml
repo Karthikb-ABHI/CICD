@@ -1,6 +1,9 @@
 jobs:
 - job: DeployJob
   displayName: Deploy Application
+  pool:
+    name: 'MTPre'  # Replace with your agent pool name
+
   steps:
     - task: PowerShell@2
       displayName: Backup App Folder
@@ -8,7 +11,11 @@ jobs:
         targetType: 'inline'
         script: |
           if (Test-Path "$(deployPath)") {
-            Copy-Item -Recurse -Force "$(deployPath)" "$(backupPath)_$(Build.BuildId)"
+            $backupPathWithBuild = "$(backupPath)_$(Build.BuildId)"
+            Copy-Item -Recurse -Force "$(deployPath)" $backupPathWithBuild
+            Write-Host "Backup created at: $backupPathWithBuild"
+          } else {
+            Write-Host "Deploy path does not exist, skipping backup."
           }
 
     - task: PowerShell@2
@@ -16,30 +23,44 @@ jobs:
       inputs:
         targetType: 'inline'
         script: |
-          $state = (Get-WebAppPoolState -Name "$(appPoolName)").Value
-          if ($state -ne "Stopped") {
+          $poolState = (Get-WebAppPoolState -Name "$(appPoolName)").Value
+          if ($poolState -eq "Started") {
             Stop-WebAppPool -Name "$(appPoolName)"
+            Write-Host "Stopped App Pool: $(appPoolName)"
+          } else {
+            Write-Host "App Pool '$(appPoolName)' is already stopped."
           }
 
     - task: PowerShell@2
-      displayName: Kill Suspended w3wp.exe
+      displayName: Kill Suspended w3wp.exe (if any)
       inputs:
         targetType: 'inline'
         script: |
           Get-WmiObject Win32_Process -Filter "Name = 'w3wp.exe'" |
-            Where-Object { $_.CommandLine -and $_.CommandLine -like "*$(appPoolName)*" } |
-            ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+            Where-Object { $_.CommandLine -like "*$(appPoolName)*" } |
+            ForEach-Object {
+              Stop-Process -Id $_.ProcessId -Force
+              Write-Host "Killed w3wp.exe with PID $($_.ProcessId)"
+            }
 
     - task: PowerShell@2
       displayName: Deploy to IIS
       inputs:
         targetType: 'inline'
         script: |
-          if (Test-Path "$(publishOutput)") {
+          if (Test-Path "$(deployPath)") {
             Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
-            Copy-Item -Recurse -Force "$(publishOutput)\*" "$(deployPath)\"
+            Write-Host "Cleared deploy path: $(deployPath)"
           } else {
-            Write-Error "Publish output path '$(publishOutput)' does not exist!"
+            New-Item -ItemType Directory -Path "$(deployPath)" | Out-Null
+            Write-Host "Created deploy path: $(deployPath)"
+          }
+
+          if (Test-Path "$(publishOutput)") {
+            Copy-Item -Recurse -Force "$(publishOutput)\*" "$(deployPath)\"
+            Write-Host "Copied published files to deploy path."
+          } else {
+            Write-Error "Publish output not found at $(publishOutput)"
           }
 
     - task: PowerShell@2
@@ -50,8 +71,8 @@ jobs:
           Start-WebAppPool -Name "$(appPoolName)"
           Start-Sleep -Seconds 10
           $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
-          if ($status -ne "Started") {
-            Write-Error "App Pool failed to start"
+          if ($status -eq "Started") {
+            Write-Host "App Pool $(appPoolName) started successfully."
           } else {
-            Write-Host "App Pool started successfully"
+            Write-Error "App Pool $(appPoolName) failed to start."
           }
