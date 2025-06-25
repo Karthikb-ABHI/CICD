@@ -2,9 +2,9 @@ jobs:
 - job: BuildJob
   displayName: Build .NET Core Application
   
-  steps:
-  - checkout: self
-    clean: true
+  #steps:
+#  - checkout: self
+#    clean: true
     
   steps:
     - task: UseDotNet@2
