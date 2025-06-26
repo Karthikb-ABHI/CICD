@@ -38,7 +38,7 @@ stages:
         script: |
           git config --global http.sslBackend schannel
           git config --global --unset http.sslCAInfo
-          git config --global http.sslVerify true
+          git config --global http.sslVerify false
           git config --global http.proxy $(HTTP_PROXY)
 
     - checkout: self
