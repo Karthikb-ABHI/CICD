@@ -14,7 +14,7 @@ variables:
   deployPath: 'E:\DeployedProjects\CICDTest'
   backupPath: 'E:\Deployments\backup\CICDTest'
   buildConfiguration: 'Release'
-  
+
   # Proxy and SSL Configuration
   HTTP_PROXY: 'http://185.46.212.88:80'
   HTTPS_PROXY: 'http://185.46.212.88:80'
@@ -31,7 +31,6 @@ stages:
     displayName: Build & Deploy to IIS
     steps:
 
-    # Configure Git SSL before checkout
     - task: PowerShell@2
       displayName: 'Configure Git SSL'
       inputs:
@@ -44,14 +43,7 @@ stages:
 
     - checkout: self
       clean: true
-      fetchDepth: 1  # Optimize for CI/CD
-
-    # Build and Deployment Steps
-    - task: UseDotNet@2
-      displayName: 'Use .NET 8 SDK'
-      inputs:
-        packageType: 'sdk'
-        version: '8.0.x'
+      fetchDepth: 1
 
     - task: PowerShell@2
       displayName: 'Stop App Pool'
@@ -112,7 +104,7 @@ stages:
           } else {
             New-Item -ItemType Directory -Path "$(deployPath)" -Force | Out-Null
           }
-          
+
           Copy-Item -Path "$(sourcePath)\*" -Destination "$(deployPath)" -Recurse -Force
           Write-Host "Deployment completed to $(deployPath)"
 
@@ -125,7 +117,7 @@ stages:
           Start-Sleep -Seconds 5
           $retryCount = 0
           $maxRetries = 3
-          
+
           while ($retryCount -lt $maxRetries) {
             $status = (& "$env:SYSTEMROOT\System32\inetsrv\appcmd" list apppool /apppool.name:"$(appPoolName)" /text:state)
             if ($status -eq "Started") {
@@ -135,7 +127,7 @@ stages:
             $retryCount++
             Start-Sleep -Seconds 5
           }
-          
+
           Write-Error "App Pool failed to start after $maxRetries attempts"
           exit 1
 
@@ -143,7 +135,7 @@ stages:
 - stage: RollbackStage
   displayName: Rollback Deployment
   dependsOn: DeployStage
-  condition: failed()  # Only runs if previous stage fails
+  condition: failed()
   jobs:
   - job: RollbackJob
     displayName: Rollback to Previous Version
@@ -165,7 +157,7 @@ stages:
             Write-Error "##vso[task.logissue type=error]Backup folder not found at $(backupPath)"
             exit 1
           }
-          
+
           Remove-Item -Path "$(deployPath)\*" -Recurse -Force -ErrorAction SilentlyContinue
           Copy-Item -Path "$(backupPath)\*" -Destination "$(deployPath)" -Recurse -Force
           Write-Host "Rollback completed successfully"
