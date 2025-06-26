@@ -38,7 +38,7 @@ stages:
         script: |
           git config --global http.sslBackend schannel
           git config --global --unset http.sslCAInfo
-          git config --global http.sslVerify false
+          git config --global http.sslVerify true
           git config --global http.proxy $(HTTP_PROXY)
 
     - checkout: self
@@ -62,22 +62,13 @@ stages:
       inputs:
         targetType: 'inline'
         script: |
-          $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-          $backupDir = "$(backupPath)_$timestamp"
-          $zipFile = "$backupDir.zip"
-
           if (Test-Path "$(deployPath)") {
-            if (Test-Path $backupDir) {
-              Remove-Item -Recurse -Force $backupDir
+            if (Test-Path "$(backupPath)") {
+              Remove-Item -Recurse -Force "$(backupPath)"
             }
-
-            New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
-            Copy-Item -Path "$(deployPath)\*" -Destination $backupDir -Recurse -Force
-
-            Compress-Archive -Path "$backupDir\*" -DestinationPath $zipFile -Force
-            Remove-Item -Recurse -Force $backupDir
-
-            Write-Host "Backup created and compressed to: $zipFile"
+            New-Item -ItemType Directory -Path "$(backupPath)" -Force | Out-Null
+            Copy-Item -Path "$(deployPath)\*" -Destination "$(backupPath)" -Recurse -Force
+            Write-Host "Backup created at $(backupPath)"
           } else {
             Write-Host "No existing deployment found - skipping backup"
           }
@@ -162,18 +153,14 @@ stages:
       inputs:
         targetType: 'inline'
         script: |
-          $latestBackup = Get-ChildItem -Path "$(backupPath)*.zip" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if (-not $latestBackup) {
-            Write-Error "##vso[task.logissue type=error]No backup zip found in $(backupPath)"
+          if (-not (Test-Path "$(backupPath)")) {
+            Write-Error "##vso[task.logissue type=error]Backup folder not found at $(backupPath)"
             exit 1
           }
 
-          if (Test-Path "$(deployPath)") {
-            Remove-Item -Path "$(deployPath)\*" -Recurse -Force
-          }
-
-          Expand-Archive -Path $latestBackup.FullName -DestinationPath "$(deployPath)" -Force
-          Write-Host "Rollback completed from backup: $($latestBackup.Name)"
+          Remove-Item -Path "$(deployPath)\*" -Recurse -Force -ErrorAction SilentlyContinue
+          Copy-Item -Path "$(backupPath)\*" -Destination "$(deployPath)" -Recurse -Force
+          Write-Host "Rollback completed successfully"
 
     - task: PowerShell@2
       displayName: 'Start App Pool'
