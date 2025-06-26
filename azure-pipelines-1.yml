@@ -1,130 +1,127 @@
+name: Build and Deploy .NET 8 App to Azure VM
+
 trigger:
-- main
+  branches:
+    include:
+      - main
 
 pool:
-  name: 'MTPreWEB'  # 👈 Change this to your agent pool name
+  name: Default  # 🔁 Use your self-hosted agent pool
 
 variables:
   appPoolName: 'healthinsurance'
-  deployPath: 'E:\Deployedprojects\CICDTest'
+  sourcePath: 'E:\Temp\CICDTest_Temp'
+  deployPath: 'E:\DeployedProjects\CICDTest'
   backupPath: 'E:\Deployments\backup\CICDTest'
-  publishOutput: '$(Build.ArtifactStagingDirectory)\publish'
+  buildConfiguration: 'Release'
 
 stages:
-- stage: BuildAndDeploy
+# ======================= Build & Deploy ========================
+- stage: DeployStage
+  displayName: Build and Deploy
   jobs:
-  - job: DeployJob
+  - job: BuildAndDeploy
+    displayName: Build & Deploy to IIS
     steps:
 
-    - task: UseDotNet@2
-      inputs:
-        packageType: 'sdk'
-        version: '8.x.x'
-
-    - task: UseDotNet@2
-      inputs:
-        packageType: 'sdk'
-        version: '6.x.x'
-
-    - task: NuGetCommand@2
-      inputs:
-        command: 'restore'
-        restoreSolution: '**/*.sln'
-
-    - task: VSBuild@1
-      inputs:
-        solution: '**/*.sln'
-        configuration: 'Release'
-
-    - task: DotNetCoreCLI@2
-      inputs:
-        command: 'publish'
-        publishWebProjects: true
-        arguments: '--configuration Release --output $(publishOutput)'
+    - checkout: self
+      clean: true
 
     - task: PowerShell@2
-      displayName: Backup App Folder
+      displayName: 'Stop App Pool'
+      inputs:
+        targetType: 'inline'
+        script: |
+          %SYSTEMROOT%\System32\inetsrv\appcmd stop apppool /apppool.name:"$(appPoolName)"
+
+    - task: PowerShell@2
+      displayName: 'Backup Current Deployment'
       inputs:
         targetType: 'inline'
         script: |
           if (Test-Path "$(deployPath)") {
-            Copy-Item -Recurse -Force "$(deployPath)" "$(backupPath)_$(Build.BuildId)"
+            Remove-Item -Recurse -Force "$(backupPath)" -ErrorAction SilentlyContinue
+            Copy-Item -Recurse -Force "$(deployPath)" "$(backupPath)"
           }
 
     - task: PowerShell@2
-      displayName: Stop App Pool
+      displayName: 'Restore Dependencies'
       inputs:
         targetType: 'inline'
         script: |
-          Stop-WebAppPool -Name "$(appPoolName)"
+          dotnet restore
 
     - task: PowerShell@2
-      displayName: Kill Suspended w3wp.exe
+      displayName: 'Build Project'
       inputs:
         targetType: 'inline'
         script: |
-          Get-WmiObject Win32_Process -Filter "Name = 'w3wp.exe'" |
-            Where-Object { $_.CommandLine -like "*$(appPoolName)*" } |
-            ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+          dotnet build --configuration $(buildConfiguration) --no-restore
 
     - task: PowerShell@2
-      displayName: Deploy to IIS
+      displayName: 'Publish Project'
+      inputs:
+        targetType: 'inline'
+        script: |
+          dotnet publish --configuration $(buildConfiguration) --output "$(sourcePath)"
+
+    - task: PowerShell@2
+      displayName: 'Deploy to IIS Folder'
       inputs:
         targetType: 'inline'
         script: |
           Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
-          Copy-Item -Recurse -Force "$(publishOutput)\*" "$(deployPath)\"
+          Copy-Item -Path "$(sourcePath)\*" -Destination "$(deployPath)\" -Recurse -Force
 
     - task: PowerShell@2
-      displayName: Start App Pool + Verify
+      displayName: 'Start App Pool + Verify'
       inputs:
         targetType: 'inline'
         script: |
-          Start-WebAppPool -Name "$(appPoolName)"
+          %SYSTEMROOT%\System32\inetsrv\appcmd start apppool /apppool.name:"$(appPoolName)"
           Start-Sleep -Seconds 10
           $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
           if ($status -ne "Started") {
             Write-Error "App Pool failed to start"
           }
 
-- stage: Rollback
-  dependsOn: BuildAndDeploy
-  condition: failed()
+# ======================= Rollback ========================
+- stage: RollbackStage
+  displayName: Rollback Deployment
+  dependsOn: DeployStage
+  condition: failed()  # Only runs if previous stage fails
   jobs:
   - job: RollbackJob
+    displayName: Rollback to Previous Version
     steps:
 
     - task: PowerShell@2
-      displayName: Stop App Pool
+      displayName: 'Stop App Pool'
       inputs:
         targetType: 'inline'
         script: |
-          Stop-WebAppPool -Name "$(appPoolName)"
+          %SYSTEMROOT%\System32\inetsrv\appcmd stop apppool /apppool.name:"$(appPoolName)"
 
     - task: PowerShell@2
-      displayName: Kill Suspended w3wp.exe
+      displayName: 'Restore Backup'
       inputs:
         targetType: 'inline'
         script: |
-          Get-WmiObject Win32_Process -Filter "Name = 'w3wp.exe'" |
-            Where-Object { $_.CommandLine -like "*$(appPoolName)*" } |
-            ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+          if (Test-Path "$(backupPath)") {
+            Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
+            Copy-Item -Recurse -Force "$(backupPath)\*" "$(deployPath)\"
+          } else {
+            Write-Error "Backup folder not found. Cannot rollback!"
+          }
 
     - task: PowerShell@2
-      displayName: Restore from Backup
+      displayName: 'Start App Pool After Rollback'
       inputs:
         targetType: 'inline'
         script: |
-          Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
-          Copy-Item -Recurse -Force "$(backupPath)_$(Build.BuildId)\*" "$(deployPath)\"
-
-    - task: PowerShell@2
-      displayName: Start App Pool + Verify
-      inputs:
-        targetType: 'inline'
-        script: |
-          Start-WebAppPool -Name "$(appPoolName)"
+          %SYSTEMROOT%\System32\inetsrv\appcmd start apppool /apppool.name:"$(appPoolName)"
           Start-Sleep -Seconds 10
           $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
           if ($status -ne "Started") {
-            Write-Error "Rollback failed. Manual intervention required."
+            Write-Error "App Pool failed to start after rollback"
+          }
