@@ -9,7 +9,7 @@ pool:
   name: MTPreWEB  # Your self-hosted agent pool
 
 variables:
-  appPoolName: 'CICDTest'
+  appPoolName: 'healthinsurance'
   sourcePath: 'E:\Temp\CICDTest_Temp'
   deployPath: 'E:\DeployedProjects\CICDTest'
   backupPath: 'E:\Deployments\backup\CICDTest'
