@@ -51,11 +51,18 @@ stages:
         targetType: 'inline'
         script: |
           try {
-            & "$env:SYSTEMROOT\System32\inetsrv\appcmd" stop apppool /apppool.name:"$(appPoolName)"
-            Write-Host "App Pool stopped successfully"
+            & "$env:SYSTEMROOT\System32\inetsrv\appcmd" stop apppool /apppool.name:"$(appPoolName)" 2>&1 | ForEach-Object {
+              if ($_ -match "already stopped") {
+                Write-Host "App Pool was already stopped"
+              } else {
+                Write-Host $_
+              }
+            }
+            Write-Host "App Pool stop command completed"
           } catch {
-            Write-Warning "Failed to stop App Pool: $_"
+            Write-Warning "Exception while stopping App Pool: $_"
           }
+          exit 0
 
     - task: PowerShell@2
       displayName: 'Backup Current Deployment'
@@ -63,12 +70,16 @@ stages:
         targetType: 'inline'
         script: |
           if (Test-Path "$(deployPath)") {
-            if (Test-Path "$(backupPath)") {
-              Remove-Item -Recurse -Force "$(backupPath)"
+            $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+            $archiveName = "Backup_$timestamp.zip"
+            $archivePath = Join-Path -Path "$(backupPath)" -ChildPath $archiveName
+
+            if (!(Test-Path "$(backupPath)")) {
+              New-Item -ItemType Directory -Path "$(backupPath)" -Force | Out-Null
             }
-            New-Item -ItemType Directory -Path "$(backupPath)" -Force | Out-Null
-            Copy-Item -Path "$(deployPath)\*" -Destination "$(backupPath)" -Recurse -Force
-            Write-Host "Backup created at $(backupPath)"
+
+            Compress-Archive -Path "$(deployPath)\*" -DestinationPath $archivePath -Force
+            Write-Host "Backup created at $archivePath"
           } else {
             Write-Host "No existing deployment found - skipping backup"
           }
@@ -146,21 +157,33 @@ stages:
       inputs:
         targetType: 'inline'
         script: |
-          & "$env:SYSTEMROOT\System32\inetsrv\appcmd" stop apppool /apppool.name:"$(appPoolName)"
+          try {
+            & "$env:SYSTEMROOT\System32\inetsrv\appcmd" stop apppool /apppool.name:"$(appPoolName)" 2>&1 | ForEach-Object {
+              if ($_ -match "already stopped") {
+                Write-Host "App Pool already stopped"
+              } else {
+                Write-Host $_
+              }
+            }
+          } catch {
+            Write-Warning "Failed to stop App Pool: $_"
+          }
 
     - task: PowerShell@2
       displayName: 'Restore Backup'
       inputs:
         targetType: 'inline'
         script: |
-          if (-not (Test-Path "$(backupPath)")) {
-            Write-Error "##vso[task.logissue type=error]Backup folder not found at $(backupPath)"
+          $latestZip = Get-ChildItem -Path "$(backupPath)" -Filter "Backup_*.zip" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+
+          if (-not $latestZip) {
+            Write-Error "##vso[task.logissue type=error]No backup zip found in $(backupPath)"
             exit 1
           }
 
           Remove-Item -Path "$(deployPath)\*" -Recurse -Force -ErrorAction SilentlyContinue
-          Copy-Item -Path "$(backupPath)\*" -Destination "$(deployPath)" -Recurse -Force
-          Write-Host "Rollback completed successfully"
+          Expand-Archive -Path $latestZip.FullName -DestinationPath "$(deployPath)" -Force
+          Write-Host "Rollback completed using $($latestZip.Name)"
 
     - task: PowerShell@2
       displayName: 'Start App Pool'
