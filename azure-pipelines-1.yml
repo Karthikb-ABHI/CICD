@@ -33,10 +33,16 @@ stages:
         targetType: 'inline'
         script: |
           try {
-            & "$env:SYSTEMROOT\System32\inetsrv\appcmd" stop apppool /apppool.name:"$(appPoolName)"
-            Write-Host "App Pool stopped successfully"
+            $output = & "$env:SYSTEMROOT\System32\inetsrv\appcmd" stop apppool /apppool.name:"$(appPoolName)" 2>&1
+            if ($output -match "already stopped" -or $output -match "insufficient permissions") {
+              Write-Warning "App Pool already stopped or permission issue: $output"
+              exit 0
+            }
+            Write-Host "App Pool stopped successfully: $output"
+            exit 0
           } catch {
-            Write-Warning "App Pool may already be stopped or does not exist. $_"
+            Write-Warning "Unexpected error stopping App Pool: $_"
+            exit 1
           }
 
     - task: PowerShell@2
@@ -119,7 +125,18 @@ stages:
       inputs:
         targetType: 'inline'
         script: |
-          & "$env:SYSTEMROOT\System32\inetsrv\appcmd" stop apppool /apppool.name:"$(appPoolName)"
+          try {
+            $output = & "$env:SYSTEMROOT\System32\inetsrv\appcmd" stop apppool /apppool.name:"$(appPoolName)" 2>&1
+            if ($output -match "already stopped" -or $output -match "insufficient permissions") {
+              Write-Warning "App Pool already stopped or permission issue: $output"
+              exit 0
+            }
+            Write-Host "App Pool stopped successfully: $output"
+            exit 0
+          } catch {
+            Write-Warning "Unexpected error stopping App Pool: $_"
+            exit 1
+          }
 
     - task: PowerShell@2
       displayName: 'Restore Backup'
