@@ -32,7 +32,12 @@ stages:
       inputs:
         targetType: 'inline'
         script: |
-          & "$env:SYSTEMROOT\System32\inetsrv\appcmd" stop apppool /apppool.name:"$(appPoolName)" || Write-Host "App Pool was already stopped"
+          try {
+            & "$env:SYSTEMROOT\System32\inetsrv\appcmd" stop apppool /apppool.name:"$(appPoolName)"
+            Write-Host "App Pool stopped successfully"
+          } catch {
+            Write-Warning "App Pool may already be stopped or does not exist. $_"
+          }
 
     - task: PowerShell@2
       displayName: 'Backup Current Deployment'
