@@ -14,8 +14,13 @@ variables:
   deployPath: 'E:\DeployedProjects\CICDTest'
   backupRootPath: 'E:\Deployments\backup\CICDTest'
   buildConfiguration: 'Release'
-  HTTP_PROXY: 'http://185.46.212.88:80'
-  HTTPS_PROXY: 'http://185.46.212.88:80'
+  # Proxy with authentication
+  proxyUsername: 'HIGRP0255'
+  proxyPassword: 'pass@0255'  # ⚠️ Prefer using secret variable for this
+  proxyAddress: '185.46.212.88:80'
+
+  HTTP_PROXY: 'http://$(proxyUsername):$(proxyPassword)@$(proxyAddress)'
+  HTTPS_PROXY: 'http://$(proxyUsername):$(proxyPassword)@$(proxyAddress)'
   NO_PROXY: 'localhost,127.0.0.1'
 
 stages:
