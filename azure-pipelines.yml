@@ -31,7 +31,7 @@ stages:
           inputs:
             targetType: 'inline'
             script: |
-              %SYSTEMROOT%\System32\inetsrv\appcmd stop apppool /apppool.name:"$(appPoolName)"
+              C:\Windows\ystem32\inetsrv\appcmd stop apppool /apppool.name:"$(appPoolName)"
 
         - task: PowerShell@2
           displayName: 'Backup Current Deployment'
@@ -80,7 +80,7 @@ stages:
           inputs:
             targetType: 'inline'
             script: |
-              %SYSTEMROOT%\System32\inetsrv\appcmd start apppool /apppool.name:"$(appPoolName)"
+              C:\Windows\System32\inetsrv\appcmd start apppool /apppool.name:"$(appPoolName)"
               Start-Sleep -Seconds 10
               $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
               if ($status -ne "Started") {
@@ -101,7 +101,7 @@ stages:
           inputs:
             targetType: 'inline'
             script: |
-              %SYSTEMROOT%\System32\inetsrv\appcmd stop apppool /apppool.name:"$(appPoolName)"
+              C:\Windows\System32\inetsrv\appcmd stop apppool /apppool.name:"$(appPoolName)"
 
         - task: PowerShell@2
           displayName: 'Restore Backup'
@@ -124,7 +124,7 @@ stages:
           inputs:
             targetType: 'inline'
             script: |
-              %SYSTEMROOT%\System32\inetsrv\appcmd start apppool /apppool.name:"$(appPoolName)"
+              C:\Windows\System32\inetsrv\appcmd start apppool /apppool.name:"$(appPoolName)"
               Start-Sleep -Seconds 10
               $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
               if ($status -ne "Started") {
