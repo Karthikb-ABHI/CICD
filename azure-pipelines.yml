@@ -30,12 +30,25 @@ stages:
         - checkout: self
           clean: true
 
+#        - task: PowerShell@2
+#          displayName: 'Stop App Pool'
+#          inputs:
+#            targetType: 'inline'
+#            script: |
+#              C:\Windows\system32\inetsrv\appcmd stop apppool /apppool.name:"$(appPoolName)"
         - task: PowerShell@2
           displayName: 'Stop App Pool'
           inputs:
             targetType: 'inline'
             script: |
-              C:\Windows\system32\inetsrv\appcmd stop apppool /apppool.name:"$(appPoolName)"
+              $appPoolName = "$(appPoolName)"
+              $status = (Get-WebAppPoolState -Name $appPoolName).Value
+              if ($status -eq "Stopped") {
+                Write-Host "App Pool '$appPoolName' is already stopped."
+              } else {
+                C:\Windows\System32\inetsrv\appcmd stop apppool /apppool.name:"$appPoolName"
+              }
+
 
         - task: PowerShell@2
           displayName: 'Backup Current Deployment'
@@ -105,7 +118,13 @@ stages:
           inputs:
             targetType: 'inline'
             script: |
-              C:\Windows\System32\inetsrv\appcmd stop apppool /apppool.name:"$(appPoolName)"
+              $appPoolName = "$(appPoolName)"
+              $status = (Get-WebAppPoolState -Name $appPoolName).Value
+              if ($status -eq "Stopped") {
+                Write-Host "App Pool '$appPoolName' is already stopped."
+              } else {
+                C:\Windows\System32\inetsrv\appcmd stop apppool /apppool.name:"$appPoolName"
+              }
 
         - task: PowerShell@2
           displayName: 'Restore Backup'
