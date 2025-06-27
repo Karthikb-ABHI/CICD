@@ -6,7 +6,7 @@ trigger:
       - main
 
 pool:
-  name: MTPreWeb  # Use your self-hosted agent pool
+  name: MTPreWeb
 
 variables:
   appPoolName: 'healthinsurance'
@@ -14,13 +14,11 @@ variables:
   deployPath: 'E:\DeployedProjects\CICDTest'
   backupRootPath: 'E:\Deployments\backup\CICDTest'
   buildConfiguration: 'Release'
-    # 👇 Add these proxy variables (HTTP and HTTPS)
   HTTP_PROXY: 'http://185.46.212.88:80'
   HTTPS_PROXY: 'http://185.46.212.88:80'
-  NO_PROXY: 'localhost,127.0.0.1'  # Optional: Bypass proxy for local addresses
+  NO_PROXY: 'localhost,127.0.0.1'
 
 stages:
-# ======================= Build & Deploy ========================
 - stage: DeployStage
   displayName: Build and Deploy
   jobs:
@@ -30,25 +28,29 @@ stages:
         - checkout: self
           clean: true
 
-#        - task: PowerShell@2
-#          displayName: 'Stop App Pool'
-#          inputs:
-#            targetType: 'inline'
-#            script: |
-#              C:\Windows\system32\inetsrv\appcmd stop apppool /apppool.name:"$(appPoolName)"
         - task: PowerShell@2
           displayName: 'Stop App Pool'
           inputs:
             targetType: 'inline'
             script: |
               $appPoolName = "$(appPoolName)"
-              $status = (Get-WebAppPoolState -Name $appPoolName).Value
-              if ($status -eq "Stopped") {
-                Write-Host "App Pool '$appPoolName' is already stopped."
-              } else {
-                C:\Windows\System32\inetsrv\appcmd stop apppool /apppool.name:"$appPoolName"
+              try {
+                  Import-Module WebAdministration -ErrorAction SilentlyContinue
+                  $status = (Get-WebAppPoolState -Name $appPoolName -ErrorAction SilentlyContinue).Value
+                  if ($status -eq "Started") {
+                      & "C:\Windows\System32\inetsrv\appcmd" stop apppool "/apppool.name:$appPoolName" 2>&1 | Out-Null
+                      Write-Host "Successfully stopped App Pool '$appPoolName'"
+                  }
+                  else {
+                      Write-Host "App Pool '$appPoolName' was already stopped"
+                  }
               }
-
+              catch {
+                  Write-Host "##vso[task.logissue type=warning]Warning: $_"
+                  & "C:\Windows\System32\inetsrv\appcmd" stop apppool "/apppool.name:$appPoolName" 2>&1 | Out-Null
+                  Write-Host "Used fallback method to stop App Pool"
+              }
+            failOnStderr: false
 
         - task: PowerShell@2
           displayName: 'Backup Current Deployment'
@@ -56,11 +58,11 @@ stages:
             targetType: 'inline'
             script: |
               if (Test-Path "$(deployPath)") {
-                $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
-                $backupPath = "$(backupRootPath)\$timestamp"
-                New-Item -ItemType Directory -Path $backupPath -Force | Out-Null
-                Copy-Item -Recurse -Force "$(deployPath)\*" "$backupPath"
-                Write-Host "##vso[task.setvariable variable=latestBackupPath]$backupPath"
+                  $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
+                  $backupPath = "$(backupRootPath)\$timestamp"
+                  New-Item -ItemType Directory -Path $backupPath -Force | Out-Null
+                  Copy-Item -Recurse -Force "$(deployPath)\*" "$backupPath"
+                  Write-Host "##vso[task.setvariable variable=latestBackupPath]$backupPath"
               }
 
         - task: PowerShell@2
@@ -97,18 +99,20 @@ stages:
           inputs:
             targetType: 'inline'
             script: |
-              C:\Windows\System32\inetsrv\appcmd start apppool /apppool.name:"$(appPoolName)"
-              Start-Sleep -Seconds 10
+              & "C:\Windows\System32\inetsrv\appcmd" start apppool "/apppool.name:$(appPoolName)"
+              Start-Sleep -Seconds 5
               $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
               if ($status -ne "Started") {
-                Write-Error "App Pool failed to start"
+                  Write-Error "App Pool failed to start (Current status: $status)"
+              }
+              else {
+                  Write-Host "App Pool started successfully"
               }
 
-# ======================= Rollback ========================
 - stage: RollbackStage
   displayName: Rollback Deployment
   dependsOn: DeployStage
-  condition: failed()  # Only runs if previous stage fails
+  condition: failed()
   jobs:
     - job: RollbackJob
       displayName: Rollback to Previous Version
@@ -119,12 +123,23 @@ stages:
             targetType: 'inline'
             script: |
               $appPoolName = "$(appPoolName)"
-              $status = (Get-WebAppPoolState -Name $appPoolName).Value
-              if ($status -eq "Stopped") {
-                Write-Host "App Pool '$appPoolName' is already stopped."
-              } else {
-                C:\Windows\System32\inetsrv\appcmd stop apppool /apppool.name:"$appPoolName"
+              try {
+                  Import-Module WebAdministration -ErrorAction SilentlyContinue
+                  $status = (Get-WebAppPoolState -Name $appPoolName -ErrorAction SilentlyContinue).Value
+                  if ($status -eq "Started") {
+                      & "C:\Windows\System32\inetsrv\appcmd" stop apppool "/apppool.name:$appPoolName" 2>&1 | Out-Null
+                      Write-Host "Successfully stopped App Pool '$appPoolName'"
+                  }
+                  else {
+                      Write-Host "App Pool '$appPoolName' was already stopped"
+                  }
               }
+              catch {
+                  Write-Host "##vso[task.logissue type=warning]Warning: $_"
+                  & "C:\Windows\System32\inetsrv\appcmd" stop apppool "/apppool.name:$appPoolName" 2>&1 | Out-Null
+                  Write-Host "Used fallback method to stop App Pool"
+              }
+            failOnStderr: false
 
         - task: PowerShell@2
           displayName: 'Restore Backup'
@@ -133,13 +148,22 @@ stages:
             script: |
               $backupPath = "$(latestBackupPath)"
               if (-not $backupPath) {
-                Write-Error "Backup path variable not set. Cannot rollback!"
+                  $latestBackup = Get-ChildItem "$(backupRootPath)" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+                  if ($latestBackup) {
+                      $backupPath = $latestBackup.FullName
+                  }
+                  else {
+                      Write-Error "No backup folders found in $(backupRootPath)"
+                      exit 1
+                  }
               }
               if (Test-Path $backupPath) {
-                Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
-                Copy-Item -Recurse -Force "$backupPath\*" "$(deployPath)\"
-              } else {
-                Write-Error "Backup folder not found. Cannot rollback!"
+                  Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
+                  Copy-Item -Recurse -Force "$backupPath\*" "$(deployPath)\"
+                  Write-Host "Successfully restored backup from $backupPath"
+              }
+              else {
+                  Write-Error "Backup folder $backupPath not found"
               }
 
         - task: PowerShell@2
@@ -147,9 +171,12 @@ stages:
           inputs:
             targetType: 'inline'
             script: |
-              C:\Windows\System32\inetsrv\appcmd start apppool /apppool.name:"$(appPoolName)"
-              Start-Sleep -Seconds 10
+              & "C:\Windows\System32\inetsrv\appcmd" start apppool "/apppool.name:$(appPoolName)"
+              Start-Sleep -Seconds 5
               $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
               if ($status -ne "Started") {
-                Write-Error "App Pool failed to start after rollback"
+                  Write-Error "App Pool failed to start after rollback (Status: $status)"
+              }
+              else {
+                  Write-Host "App Pool started successfully after rollback"
               }
