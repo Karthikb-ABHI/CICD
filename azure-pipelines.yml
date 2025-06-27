@@ -5,23 +5,24 @@ trigger:
     include:
       - main
 
-pool:
-  name: MTPreWeb
-
 variables:
+  # Deployment paths
   appPoolName: 'healthinsurance'
   sourcePath: 'E:\Temp\CICDTest_Temp'
   deployPath: 'E:\DeployedProjects\CICDTest'
   backupRootPath: 'E:\Deployments\backup\CICDTest'
   buildConfiguration: 'Release'
-  # Proxy with authentication
-  proxyUsername: 'HIGRP0255'
-  proxyPassword: 'pass@0255'  # ⚠️ Prefer using secret variable for this
+  
+  # Proxy configuration (credentials should be secret variables)
   proxyAddress: '185.46.212.88:80'
-
+  proxyUsername: $(proxyUsername)  # Set as secret variable
+  proxyPassword: $(proxyPassword)  # Set as secret variable
   HTTP_PROXY: 'http://$(proxyUsername):$(proxyPassword)@$(proxyAddress)'
   HTTPS_PROXY: 'http://$(proxyUsername):$(proxyPassword)@$(proxyAddress)'
   NO_PROXY: 'localhost,127.0.0.1'
+
+pool:
+  name: MTPreWeb
 
 stages:
 - stage: DeployStage
@@ -32,6 +33,24 @@ stages:
       steps:
         - checkout: self
           clean: true
+
+        # Configure environment for proxy
+        - task: PowerShell@2
+          displayName: 'Configure Proxy Settings'
+          inputs:
+            targetType: 'inline'
+            script: |
+              # Set environment variables
+              $env:HTTP_PROXY = "$(HTTP_PROXY)"
+              $env:HTTPS_PROXY = "$(HTTPS_PROXY)"
+              $env:NO_PROXY = "$(NO_PROXY)"
+              
+              # Configure .NET to use proxy
+              [System.Net.WebRequest]::DefaultWebProxy = New-Object System.Net.WebProxy("$(HTTP_PROXY)")
+              [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+              
+              # Configure NuGet
+              & dotnet nuget update source "nuget.org" --source "https://api.nuget.org/v3/index.json"
 
         - task: PowerShell@2
           displayName: 'Stop App Pool'
@@ -53,7 +72,6 @@ stages:
               catch {
                   Write-Host "##vso[task.logissue type=warning]Warning: $_"
                   & "C:\Windows\System32\inetsrv\appcmd" stop apppool "/apppool.name:$appPoolName" 2>&1 | Out-Null
-                  Write-Host "Used fallback method to stop App Pool"
               }
             failOnStderr: false
 
@@ -68,6 +86,10 @@ stages:
                   New-Item -ItemType Directory -Path $backupPath -Force | Out-Null
                   Copy-Item -Recurse -Force "$(deployPath)\*" "$backupPath"
                   Write-Host "##vso[task.setvariable variable=latestBackupPath]$backupPath"
+                  Write-Host "Backup created at $backupPath"
+              }
+              else {
+                  Write-Host "No existing deployment found at $(deployPath)"
               }
 
         - task: PowerShell@2
@@ -75,7 +97,34 @@ stages:
           inputs:
             targetType: 'inline'
             script: |
-              dotnet restore
+              $maxRetries = 3
+              $retryCount = 0
+              $success = $false
+              
+              while (-not $success -and $retryCount -lt $maxRetries) {
+                  try {
+                      Write-Host "Restore attempt $($retryCount + 1)..."
+                      dotnet restore --interactive --verbosity detailed
+                      if ($LASTEXITCODE -eq 0) {
+                          $success = $true
+                      }
+                  }
+                  catch {
+                      Write-Host "##vso[task.logissue type=warning]Attempt failed: $_"
+                      $retryCount++
+                      if ($retryCount -lt $maxRetries) {
+                          Start-Sleep -Seconds (10 * $retryCount)
+                          dotnet nuget locals all --clear
+                      }
+                  }
+              }
+              
+              if (-not $success) {
+                  Write-Error "All restore attempts failed"
+                  exit 1
+              }
+          env:
+            DOTNET_SYSTEM_NET_HTTP_USEPROXY: 'true'
 
         - task: PowerShell@2
           displayName: 'Build Project'
@@ -98,6 +147,7 @@ stages:
             script: |
               Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
               Copy-Item -Path "$(sourcePath)\*" -Destination "$(deployPath)\" -Recurse -Force
+              Write-Host "Deployment completed to $(deployPath)"
 
         - task: PowerShell@2
           displayName: 'Start App Pool + Verify'
@@ -109,10 +159,9 @@ stages:
               $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
               if ($status -ne "Started") {
                   Write-Error "App Pool failed to start (Current status: $status)"
+                  exit 1
               }
-              else {
-                  Write-Host "App Pool started successfully"
-              }
+              Write-Host "App Pool started successfully"
 
 - stage: RollbackStage
   displayName: Rollback Deployment
@@ -142,7 +191,6 @@ stages:
               catch {
                   Write-Host "##vso[task.logissue type=warning]Warning: $_"
                   & "C:\Windows\System32\inetsrv\appcmd" stop apppool "/apppool.name:$appPoolName" 2>&1 | Out-Null
-                  Write-Host "Used fallback method to stop App Pool"
               }
             failOnStderr: false
 
@@ -156,6 +204,7 @@ stages:
                   $latestBackup = Get-ChildItem "$(backupRootPath)" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
                   if ($latestBackup) {
                       $backupPath = $latestBackup.FullName
+                      Write-Host "Using latest backup found: $backupPath"
                   }
                   else {
                       Write-Error "No backup folders found in $(backupRootPath)"
@@ -169,6 +218,7 @@ stages:
               }
               else {
                   Write-Error "Backup folder $backupPath not found"
+                  exit 1
               }
 
         - task: PowerShell@2
@@ -181,7 +231,6 @@ stages:
               $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
               if ($status -ne "Started") {
                   Write-Error "App Pool failed to start after rollback (Status: $status)"
+                  exit 1
               }
-              else {
-                  Write-Host "App Pool started successfully after rollback"
-              }
+              Write-Host "App Pool started successfully after rollback"
