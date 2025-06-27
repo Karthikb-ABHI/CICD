@@ -4,6 +4,8 @@ variables:
   buildConfiguration: $(buildConfiguration) # Defined in Variables tab
   deployPath: $(deployPath)          # Defined in Variables tab
   sourcePath: $(sourcePath)          # Defined in Variables tab
+  http_proxy: 'http://185.46.212.88:80'
+  https_proxy: 'http://185.46.212.88:80'
 
 stages:
 - stage: Deploy
