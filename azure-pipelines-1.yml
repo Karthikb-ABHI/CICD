@@ -6,7 +6,7 @@ trigger:
       - main
 
 pool:
-  name: MTPreWEB
+  name: Default  # 🔁 Use your self-hosted agent pool
 
 variables:
   appPoolName: 'healthinsurance'
@@ -14,13 +14,9 @@ variables:
   deployPath: 'E:\DeployedProjects\CICDTest'
   backupPath: 'E:\Deployments\backup\CICDTest'
   buildConfiguration: 'Release'
-  
-  # Proxy Configuration (verified working)
-  HTTP_PROXY: 'http://185.46.212.88:80'
-  HTTPS_PROXY: 'http://185.46.212.88:80'
-  NO_PROXY: 'localhost,127.0.0.1'
 
 stages:
+# ======================= Build & Deploy ========================
 - stage: DeployStage
   displayName: Build and Deploy
   jobs:
@@ -28,151 +24,104 @@ stages:
     displayName: Build & Deploy to IIS
     steps:
 
-    - task: PowerShell@2
-      displayName: 'Configure Git SSL'
-      inputs:
-        targetType: 'inline'
-        script: |
-          git config --global http.sslBackend schannel
-          git config --global http.sslVerify true
-          git config --global http.proxy $(HTTP_PROXY)
-          Write-Host "Git SSL configured successfully"
-
     - checkout: self
       clean: true
-      fetchDepth: 1
 
-    # Rest of your pipeline steps...
     - task: PowerShell@2
       displayName: 'Stop App Pool'
       inputs:
         targetType: 'inline'
         script: |
-          try {
-            $output = & "$env:SYSTEMROOT\System32\inetsrv\appcmd" stop apppool /apppool.name:"$(appPoolName)" 2>&1
-            if ($LASTEXITCODE -ne 0) {
-              Write-Host "App Pool stop result: $output"
-            }
-            Write-Host "App Pool stopped successfully"
-          } catch {
-            Write-Warning "Non-critical error stopping App Pool: $_"
-          }
+          %SYSTEMROOT%\System32\inetsrv\appcmd stop apppool /apppool.name:"$(appPoolName)"
 
     - task: PowerShell@2
       displayName: 'Backup Current Deployment'
       inputs:
         targetType: 'inline'
         script: |
-          $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-          $backupFile = "$(backupPath)\$(appPoolName)_$timestamp.zip"
-          
           if (Test-Path "$(deployPath)") {
-            Compress-Archive -Path "$(deployPath)\*" -DestinationPath $backupFile -Force
-            Write-Host "Created backup: $backupFile"
-          } else {
-            Write-Host "No existing deployment to backup"
+            Remove-Item -Recurse -Force "$(backupPath)" -ErrorAction SilentlyContinue
+            Copy-Item -Recurse -Force "$(deployPath)" "$(backupPath)"
           }
 
-    - task: DotNetCoreCLI@2
+    - task: PowerShell@2
       displayName: 'Restore Dependencies'
       inputs:
-        command: 'restore'
-        projects: '**/*.csproj'
-        feedsToUse: 'select'
+        targetType: 'inline'
+        script: |
+          dotnet restore
 
-    - task: DotNetCoreCLI@2
+    - task: PowerShell@2
       displayName: 'Build Project'
       inputs:
-        command: 'build'
-        projects: '**/*.csproj'
-        arguments: '--configuration $(buildConfiguration) --no-restore'
+        targetType: 'inline'
+        script: |
+          dotnet build --configuration $(buildConfiguration) --no-restore
 
-    - task: DotNetCoreCLI@2
+    - task: PowerShell@2
       displayName: 'Publish Project'
       inputs:
-        command: 'publish'
-        publishWebProjects: true
-        arguments: '--configuration $(buildConfiguration) --output $(sourcePath) --no-build'
+        targetType: 'inline'
+        script: |
+          dotnet publish --configuration $(buildConfiguration) --output "$(sourcePath)"
 
     - task: PowerShell@2
-      displayName: 'Deploy to IIS'
+      displayName: 'Deploy to IIS Folder'
       inputs:
         targetType: 'inline'
         script: |
-          if (!(Test-Path "$(deployPath)")) {
-            New-Item -ItemType Directory -Path "$(deployPath)" -Force | Out-Null
-          }
-          Copy-Item -Path "$(sourcePath)\*" -Destination "$(deployPath)" -Recurse -Force
-          Write-Host "Deployed to $(deployPath)"
+          Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
+          Copy-Item -Path "$(sourcePath)\*" -Destination "$(deployPath)\" -Recurse -Force
 
     - task: PowerShell@2
-      displayName: 'Start App Pool & Verify'
+      displayName: 'Start App Pool + Verify'
       inputs:
         targetType: 'inline'
         script: |
-          & "$env:SYSTEMROOT\System32\inetsrv\appcmd" start apppool /apppool.name:"$(appPoolName)"
-          Start-Sleep -Seconds 2
-          $status = (& "$env:SYSTEMROOT\System32\inetsrv\appcmd" list apppool /apppool.name:"$(appPoolName)" /text:state)
-          if ($status -eq "Started") {
-            Write-Host "App Pool started successfully"
-          } else {
-            Write-Error "App Pool failed to start (Status: $status)"
-            exit 1
+          %SYSTEMROOT%\System32\inetsrv\appcmd start apppool /apppool.name:"$(appPoolName)"
+          Start-Sleep -Seconds 10
+          $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
+          if ($status -ne "Started") {
+            Write-Error "App Pool failed to start"
           }
 
+# ======================= Rollback ========================
 - stage: RollbackStage
   displayName: Rollback Deployment
   dependsOn: DeployStage
-  condition: failed()
+  condition: failed()  # Only runs if previous stage fails
   jobs:
   - job: RollbackJob
     displayName: Rollback to Previous Version
     steps:
-    # ... [keep your existing rollback steps] ...
 
     - task: PowerShell@2
       displayName: 'Stop App Pool'
       inputs:
         targetType: 'inline'
         script: |
-          try {
-            & "$env:SYSTEMROOT\System32\inetsrv\appcmd" stop apppool /apppool.name:"$(appPoolName)" 2>&1 | ForEach-Object {
-              if ($_ -match "already stopped") {
-                Write-Host "App Pool already stopped"
-              } else {
-                Write-Host $_
-              }
-            }
-          } catch {
-            Write-Warning "Failed to stop App Pool: $_"
-          }
+          %SYSTEMROOT%\System32\inetsrv\appcmd stop apppool /apppool.name:"$(appPoolName)"
 
     - task: PowerShell@2
       displayName: 'Restore Backup'
       inputs:
         targetType: 'inline'
         script: |
-          $latestZip = Get-ChildItem -Path "$(backupPath)" -Filter "Backup_*.zip" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-
-          if (-not $latestZip) {
-            Write-Error "##vso[task.logissue type=error]No backup zip found in $(backupPath)"
-            exit 1
+          if (Test-Path "$(backupPath)") {
+            Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
+            Copy-Item -Recurse -Force "$(backupPath)\*" "$(deployPath)\"
+          } else {
+            Write-Error "Backup folder not found. Cannot rollback!"
           }
 
-          Remove-Item -Path "$(deployPath)\*" -Recurse -Force -ErrorAction SilentlyContinue
-          Expand-Archive -Path $latestZip.FullName -DestinationPath "$(deployPath)" -Force
-          Write-Host "Rollback completed using $($latestZip.Name)"
-
     - task: PowerShell@2
-      displayName: 'Start App Pool'
+      displayName: 'Start App Pool After Rollback'
       inputs:
         targetType: 'inline'
         script: |
-          & "$env:SYSTEMROOT\System32\inetsrv\appcmd" start apppool /apppool.name:"$(appPoolName)"
-          Start-Sleep -Seconds 5
-          $status = (& "$env:SYSTEMROOT\System32\inetsrv\appcmd" list apppool /apppool.name:"$(appPoolName)" /text:state)
+          %SYSTEMROOT%\System32\inetsrv\appcmd start apppool /apppool.name:"$(appPoolName)"
+          Start-Sleep -Seconds 10
+          $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
           if ($status -ne "Started") {
-            Write-Error "##vso[task.logissue type=error]App Pool failed to start after rollback"
-            exit 1
+            Write-Error "App Pool failed to start after rollback"
           }
-          Write-Host "App Pool started successfully after rollback"
