@@ -6,20 +6,18 @@ trigger:
       - main
 
 variables:
-  # Deployment paths
+  # Non-sensitive configuration
   appPoolName: 'healthinsurance'
   sourcePath: 'E:\Temp\CICDTest_Temp'
   deployPath: 'E:\DeployedProjects\CICDTest'
   backupRootPath: 'E:\Deployments\backup\CICDTest'
   buildConfiguration: 'Release'
-  
-  # Proxy configuration (credentials should be secret variables)
   proxyAddress: '185.46.212.88:80'
-  proxyUsername: $(proxyUsername)  # Set as secret variable
-  proxyPassword: $(proxyPassword)  # Set as secret variable
-  HTTP_PROXY: 'http://$(proxyUsername):$(proxyPassword)@$(proxyAddress)'
-  HTTPS_PROXY: 'http://$(proxyUsername):$(proxyPassword)@$(proxyAddress)'
   NO_PROXY: 'localhost,127.0.0.1'
+
+  # Secret variables (set these in Azure DevOps UI)
+  HTTP_PROXY: $(HTTP_PROXY)  # Set as 'http://HIGRP0255:pass@0255@185.46.212.88:80' in UI
+  HTTPS_PROXY: $(HTTPS_PROXY)  # Same as above
 
 pool:
   name: MTPreWeb
@@ -34,23 +32,20 @@ stages:
         - checkout: self
           clean: true
 
-        # Configure environment for proxy
+        # Configure proxy environment
         - task: PowerShell@2
           displayName: 'Configure Proxy Settings'
           inputs:
             targetType: 'inline'
             script: |
-              # Set environment variables
-              $env:HTTP_PROXY = "$(HTTP_PROXY)"
-              $env:HTTPS_PROXY = "$(HTTPS_PROXY)"
-              $env:NO_PROXY = "$(NO_PROXY)"
-              
-              # Configure .NET to use proxy
+              Write-Host "Configuring proxy environment..."
               [System.Net.WebRequest]::DefaultWebProxy = New-Object System.Net.WebProxy("$(HTTP_PROXY)")
               [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
-              
-              # Configure NuGet
-              & dotnet nuget update source "nuget.org" --source "https://api.nuget.org/v3/index.json"
+              Write-Host "Proxy configuration complete"
+          env:
+            HTTP_PROXY: $(HTTP_PROXY)
+            HTTPS_PROXY: $(HTTPS_PROXY)
+            NO_PROXY: $(NO_PROXY)
 
         - task: PowerShell@2
           displayName: 'Stop App Pool'
@@ -124,6 +119,8 @@ stages:
                   exit 1
               }
           env:
+            HTTP_PROXY: $(HTTP_PROXY)
+            HTTPS_PROXY: $(HTTPS_PROXY)
             DOTNET_SYSTEM_NET_HTTP_USEPROXY: 'true'
 
         - task: PowerShell@2
