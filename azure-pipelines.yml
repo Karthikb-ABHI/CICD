@@ -31,7 +31,7 @@ stages:
           inputs:
             targetType: 'inline'
             script: |
-              C:\Windows\ystem32\inetsrv\appcmd stop apppool /apppool.name:"$(appPoolName)"
+              C:\Windows\system32\inetsrv\appcmd stop apppool /apppool.name:"$(appPoolName)"
 
         - task: PowerShell@2
           displayName: 'Backup Current Deployment'
