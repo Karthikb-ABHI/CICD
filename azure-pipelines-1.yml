@@ -6,7 +6,7 @@ trigger:
       - main
 
 pool:
-  name: Default  # 🔁 Use your self-hosted agent pool
+  name: MTPreWEB  # 🔁 Use your self-hosted agent pool
 
 variables:
   appPoolName: 'healthinsurance'
