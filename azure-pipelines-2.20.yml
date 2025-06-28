@@ -142,7 +142,7 @@ stages:
     pool: server
     steps:
     - task: ManualValidation@0
-      timeoutInMinutes: 60
+      timeoutInMinutes: 180
       inputs:
         notifyUsers: |
           karthik.4-v@adityabirlacapital.com
@@ -153,7 +153,8 @@ stages:
   displayName: Rollback
   dependsOn: ApprovalStage
   #condition: or(eq(dependencies.ApprovalStage.jobs.WaitForApproval.outputs['ManualValidation.approvalStatus'], 'Rejected'), eq(dependencies.ApprovalStage.jobs.WaitForApproval.outputs['ManualValidation.approvalStatus'], 'TimedOut'))
-  condition: or(eq(dependencies.ApprovalStage.jobs.WaitForApproval.result, 'Rejected'), eq(dependencies.ApprovalStage.jobs.WaitForApproval.result, 'Skipped'), eq(dependencies.ApprovalStage.jobs.WaitForApproval.result, 'Failed'))
+  #condition: or(eq(dependencies.ApprovalStage.jobs.WaitForApproval.result, 'Rejected'), eq(dependencies.ApprovalStage.jobs.WaitForApproval.result, 'Skipped'), eq(dependencies.ApprovalStage.jobs.WaitForApproval.result, 'Failed'))
+  condition: eq(dependencies.ApprovalStage.jobs.WaitForApproval.result, 'Failed')
   jobs:
   - job: RollbackJob
     displayName: Execute Rollback
