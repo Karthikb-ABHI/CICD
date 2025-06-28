@@ -6,10 +6,10 @@ trigger:
       - main
 
 pool:
-  name: Default  # Use your self-hosted agent pool
+  name: MTPre  # Use your self-hosted agent pool
 
 variables:
-  appPoolName: 'healthinsurance'
+  appPoolName: 'CICDTest'
   sourcePath: 'E:\Temp\CICDTest_Temp'
   deployPath: 'E:\DeployedProjects\CICDTest'
   backupRootPath: 'E:\Deployments\backup\CICDTest'
