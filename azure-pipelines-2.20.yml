@@ -76,76 +76,45 @@ stages:
       inputs:
         targetType: 'inline'
         script: |
-          try {
-              dotnet restore
-          }
-          catch {
-              Write-Host "##vso[task.logissue type=error]Restore failed: $_"
-              exit 1
-          }
+          dotnet restore
 
     - task: PowerShell@2
       displayName: 'Build Project'
       inputs:
         targetType: 'inline'
         script: |
-          try {
-              dotnet build --configuration $(buildConfiguration) --no-restore
-          }
-          catch {
-              Write-Host "##vso[task.logissue type=error]Build failed: $_"
-              exit 1
-          }
+          dotnet build --configuration $(buildConfiguration) --no-restore
 
     - task: PowerShell@2
       displayName: 'Publish and Package'
       inputs:
         targetType: 'inline'
         script: |
-          try {
-              dotnet publish --configuration $(buildConfiguration) --output "$(sourcePath)"
-              $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
-              New-Item -Path "$(publishPath)" -ItemType Directory -Force -ErrorAction SilentlyContinue
-              $zipPath = "$(publishPath)\CICDTest_Publish_$timestamp.zip"
-              Compress-Archive -Path "$(sourcePath)\*" -DestinationPath $zipPath -Force
-              Write-Host "##vso[task.setvariable variable=publishZipPath]$zipPath"
-          }
-          catch {
-              Write-Host "##vso[task.logissue type=error]Publish failed: $_"
-              exit 1
-          }
+          dotnet publish --configuration $(buildConfiguration) --output "$(sourcePath)"
+          $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
+          New-Item -Path "$(publishPath)" -ItemType Directory -Force -ErrorAction SilentlyContinue
+          $zipPath = "$(publishPath)\CICDTest_Publish_$timestamp.zip"
+          Compress-Archive -Path "$(sourcePath)\*" -DestinationPath $zipPath -Force
+          Write-Host "##vso[task.setvariable variable=publishZipPath]$zipPath"
 
     - task: PowerShell@2
       displayName: 'Deploy to IIS'
       inputs:
         targetType: 'inline'
         script: |
-          try {
-              Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
-              Expand-Archive -Path "$(publishZipPath)" -DestinationPath "$(deployPath)" -Force
-              Write-Host "##[section]Deployment completed to $(deployPath)"
-          }
-          catch {
-              Write-Host "##vso[task.logissue type=error]Deployment failed: $_"
-              exit 1
-          }
+          Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
+          Expand-Archive -Path "$(publishZipPath)" -DestinationPath "$(deployPath)" -Force
 
     - task: PowerShell@2
       displayName: 'Start App Pool'
       inputs:
         targetType: 'inline'
         script: |
-          try {
-              & "C:\Windows\System32\inetsrv\appcmd" start apppool "/apppool.name:$(appPoolName)"
-              Start-Sleep -Seconds 10
-              $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
-              if ($status -ne "Started") {
-                  throw "App Pool failed to start (Current status: $status)"
-              }
-              Write-Host "##[section]App Pool started successfully"
-          }
-          catch {
-              Write-Host "##vso[task.logissue type=error]Start App Pool failed: $_"
+          & "C:\Windows\System32\inetsrv\appcmd" start apppool "/apppool.name:$(appPoolName)"
+          Start-Sleep -Seconds 10
+          $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
+          if ($status -ne "Started") {
+              Write-Host "##vso[task.logissue type=error]App Pool failed to start (Current status: $status)"
               exit 1
           }
 
@@ -154,21 +123,15 @@ stages:
       inputs:
         targetType: 'inline'
         script: |
-          try {
-              # Clean temp files
-              if (Test-Path "$(sourcePath)") {
-                  Remove-Item -Recurse -Force "$(sourcePath)\*" -ErrorAction SilentlyContinue
-              }
-              
-              # Clean old archives (15+ days)
-              $cutoffDate = (Get-Date).AddDays(-15)
-              Get-ChildItem "$(publishPath)", "$(backupRootPath)" -Filter '*.zip' | 
-                  Where-Object { $_.CreationTime -lt $cutoffDate } | 
-                  Remove-Item -Force -ErrorAction SilentlyContinue
+          # Clean temp files
+          if (Test-Path "$(sourcePath)") {
+              Remove-Item -Recurse -Force "$(sourcePath)\*" -ErrorAction SilentlyContinue
           }
-          catch {
-              Write-Host "##vso[task.logissue type=warning]Cleanup failed: $_"
-          }
+          # Clean old archives
+          $cutoffDate = (Get-Date).AddDays(-15)
+          Get-ChildItem "$(publishPath)", "$(backupRootPath)" -Filter '*.zip' |
+              Where-Object { $_.CreationTime -lt $cutoffDate } |
+              Remove-Item -Force -ErrorAction SilentlyContinue
 
 - stage: ApprovalStage
   displayName: Manual Approval
@@ -189,7 +152,7 @@ stages:
 - stage: RollbackStage
   displayName: Rollback
   dependsOn: ApprovalStage
-  condition: or(eq(dependencies.ApprovalStage.result, 'Rejected'), eq(dependencies.ApprovalStage.result, 'TimedOut'))
+  condition: or(eq(dependencies.ApprovalStage.jobs.WaitForApproval.outputs['ManualValidation.approvalStatus'], 'Rejected'), eq(dependencies.ApprovalStage.jobs.WaitForApproval.outputs['ManualValidation.approvalStatus'], 'TimedOut'))
   jobs:
   - job: RollbackJob
     displayName: Execute Rollback
@@ -205,14 +168,12 @@ stages:
                   Write-Host "##[section]App pool already stopped. Proceeding."
               } 
               else {
-                  Write-Host "##[section]Stopping app pool..."
                   & "C:\Windows\System32\inetsrv\appcmd" stop apppool "/apppool.name:$(appPoolName)"
                   Start-Sleep -Seconds 10
                   $statusAfter = (Get-WebAppPoolState -Name "$(appPoolName)").Value
                   if ($statusAfter -ne "Stopped") {
                       throw "App pool failed to stop after stop command."
                   }
-                  Write-Host "##[section]App pool successfully stopped."
               }
           }
           catch {
@@ -225,34 +186,23 @@ stages:
       inputs:
         targetType: 'inline'
         script: |
-          try {
-              if (-not $(latestBackupPath)) {
-                  throw "Backup path not available"
-              }
-              Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
-              Expand-Archive -Path "$(latestBackupPath)" -DestinationPath "$(deployPath)" -Force
-              Write-Host "##[section]Backup restored from $(latestBackupPath)"
-          }
-          catch {
-              Write-Host "##vso[task.logissue type=error]Restore failed: $_"
+          if (-not $(latestBackupPath)) {
+              Write-Host "##vso[task.logissue type=error]Backup path not set."
               exit 1
           }
+          Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
+          Expand-Archive -Path "$(latestBackupPath)" -DestinationPath "$(deployPath)" -Force
+          Write-Host "##[section]Rollback completed using backup: $(latestBackupPath)"
 
     - task: PowerShell@2
       displayName: 'Start App Pool'
       inputs:
         targetType: 'inline'
         script: |
-          try {
-              & "C:\Windows\System32\inetsrv\appcmd" start apppool "/apppool.name:$(appPoolName)"
-              Start-Sleep -Seconds 10
-              $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
-              if ($status -ne "Started") {
-                  throw "App Pool failed to start after rollback"
-              }
-              Write-Host "##[section]App Pool restarted after rollback"
-          }
-          catch {
-              Write-Host "##vso[task.logissue type=error]Start App Pool failed: $_"
+          & "C:\Windows\System32\inetsrv\appcmd" start apppool "/apppool.name:$(appPoolName)"
+          Start-Sleep -Seconds 10
+          $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
+          if ($status -ne "Started") {
+              Write-Host "##vso[task.logissue type=error]App Pool failed to start after rollback"
               exit 1
           }
