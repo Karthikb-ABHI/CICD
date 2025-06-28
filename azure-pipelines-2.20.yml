@@ -6,7 +6,7 @@ trigger:
       - main
 
 pool:
-  name: MTPre  # Use your self-hosted agent pool
+  name: MTPre  # Your self-hosted agent pool
 
 variables:
   appPoolName: 'CICDTest'
@@ -27,40 +27,23 @@ stages:
           clean: true
 
         - task: PowerShell@2
-          displayName: 'Stop App Pool (Graceful + Wait 60s)'
+          displayName: 'Stop App Pool'
           inputs:
             targetType: 'inline'
             script: |
-              try {
-                $appPool = Get-WebAppPoolState -Name "$(appPoolName)"
-                if ($appPool.Value -eq "Stopped") {
-                  Write-Host "Application pool '$(appPoolName)' is already stopped."
-                } else {
-                  C:\Windows\System32\inetsrv\appcmd.exe stop apppool /apppool.name:"$(appPoolName)"
-                  Write-Host "Application pool '$(appPoolName)' stopped successfully."
-                }
-              } catch {
-                Write-Warning "Could not check or stop App Pool '$(appPoolName)': $_"
-              }
-              Write-Host "Waiting 60 seconds to ensure app pool is fully stopped..."
+              C:\Windows\System32\inetsrv\appcmd.exe stop apppool /apppool.name:"$(appPoolName)"
               Start-Sleep -Seconds 60
 
         - task: PowerShell@2
-          displayName: 'Backup Current Deployment as ZIP'
+          displayName: 'Backup Current Deployment (Compressed)'
           inputs:
             targetType: 'inline'
             script: |
               if (Test-Path "$(deployPath)") {
                 $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
-                $backupFile = "$(backupRootPath)\backup_$timestamp.zip"
-                if (!(Test-Path "$(backupRootPath)")) {
-                  New-Item -ItemType Directory -Path "$(backupRootPath)" -Force | Out-Null
-                }
-                Compress-Archive -Path "$(deployPath)\*" -DestinationPath $backupFile -Force
-                Write-Host "##vso[task.setvariable variable=latestBackupFile]$backupFile"
-                Write-Host "Backup saved as: $backupFile"
-              } else {
-                Write-Host "No deployment found at $(deployPath); skipping backup."
+                $backupPath = "$(backupRootPath)\CICDTest_$timestamp.zip"
+                Compress-Archive -Path "$(deployPath)\*" -DestinationPath $backupPath -Force
+                Write-Host "##vso[task.setvariable variable=latestBackupPath]$backupPath"
               }
 
         - task: PowerShell@2
@@ -104,47 +87,55 @@ stages:
                 Write-Error "App Pool failed to start"
               }
 
+# ======================= Manual Approval ========================
+- stage: ApprovalStage
+  displayName: Manual Sanity Check Approval
+  dependsOn: DeployStage
+  jobs:
+    - job: WaitForApproval
+      displayName: Wait for manual approval
+      pool: server
+      steps:
+        - task: ManualValidation@0
+          timeoutInMinutes: 60  # Timeout if no response in 60 minutes
+          inputs:
+            notifyUsers: |
+              karthik.4-v@adityabirlacapital.com
+              
+            instructions: 'Please validate deployment sanity and approve or reject.'
+            onTimeout: 'reject'
+
 # ======================= Rollback ========================
 - stage: RollbackStage
   displayName: Rollback Deployment
-  dependsOn: DeployStage
-  condition: failed()
+  dependsOn: ApprovalStage
+  condition: eq(dependencies.ApprovalStage.outputs['ManualValidation.approvalStatus'], 'Rejected')
   jobs:
     - job: RollbackJob
       displayName: Rollback to Previous Version
       steps:
         - task: PowerShell@2
-          displayName: 'Stop App Pool (Graceful + Wait 60s - Rollback)'
+          displayName: 'Stop App Pool'
           inputs:
             targetType: 'inline'
             script: |
-              try {
-                $appPool = Get-WebAppPoolState -Name "$(appPoolName)"
-                if ($appPool.Value -eq "Stopped") {
-                  Write-Host "Application pool '$(appPoolName)' is already stopped."
-                } else {
-                  C:\Windows\System32\inetsrv\appcmd.exe stop apppool /apppool.name:"$(appPoolName)"
-                  Write-Host "Application pool '$(appPoolName)' stopped successfully."
-                }
-              } catch {
-                Write-Warning "Could not check or stop App Pool '$(appPoolName)': $_"
-              }
-              Write-Host "Waiting 60 seconds to ensure app pool is fully stopped..."
+              C:\Windows\System32\inetsrv\appcmd.exe stop apppool /apppool.name:"$(appPoolName)"
               Start-Sleep -Seconds 60
 
         - task: PowerShell@2
-          displayName: 'Restore Latest Backup ZIP'
+          displayName: 'Restore Backup'
           inputs:
             targetType: 'inline'
             script: |
-              $backupRoot = "$(backupRootPath)"
-              $latestZip = Get-ChildItem -Path $backupRoot -Filter "backup_*.zip" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-              if (-not $latestZip) {
-                Write-Error "No backup ZIP files found in $backupRoot. Cannot rollback!"
-              } else {
-                Write-Host "Restoring from backup file: $($latestZip.FullName)"
+              $backupPath = "$(latestBackupPath)"
+              if (-not $backupPath) {
+                Write-Error "Backup path variable not set. Cannot rollback!"
+              }
+              if (Test-Path $backupPath) {
                 Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
-                Expand-Archive -Path $latestZip.FullName -DestinationPath "$(deployPath)" -Force
+                Expand-Archive -Path "$backupPath" -DestinationPath "$(deployPath)" -Force
+              } else {
+                Write-Error "Backup file not found. Cannot rollback!"
               }
 
         - task: PowerShell@2
