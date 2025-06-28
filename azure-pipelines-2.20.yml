@@ -152,7 +152,8 @@ stages:
 - stage: RollbackStage
   displayName: Rollback
   dependsOn: ApprovalStage
-  condition: or(eq(dependencies.ApprovalStage.jobs.WaitForApproval.outputs['ManualValidation.approvalStatus'], 'Rejected'), eq(dependencies.ApprovalStage.jobs.WaitForApproval.outputs['ManualValidation.approvalStatus'], 'TimedOut'))
+  #condition: or(eq(dependencies.ApprovalStage.jobs.WaitForApproval.outputs['ManualValidation.approvalStatus'], 'Rejected'), eq(dependencies.ApprovalStage.jobs.WaitForApproval.outputs['ManualValidation.approvalStatus'], 'TimedOut'))
+  condition: or(eq(dependencies.ApprovalStage.jobs.WaitForApproval.result, 'Rejected'), eq(dependencies.ApprovalStage.jobs.WaitForApproval.result, 'Skipped'), eq(dependencies.ApprovalStage.jobs.WaitForApproval.result, 'Failed'))
   jobs:
   - job: RollbackJob
     displayName: Execute Rollback
