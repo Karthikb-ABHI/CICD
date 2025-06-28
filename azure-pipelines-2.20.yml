@@ -1,4 +1,4 @@
-name: Build and Deploy .NET 8 App to Azure VM
+name: MTPREE-2.20
 
 trigger:
   branches:
@@ -15,9 +15,9 @@ variables:
   backupRootPath: 'E:\Deployments\backup\CICDTest'
   buildConfiguration: 'Release'
       # 👇 Add these proxy variables (HTTP and HTTPS)
-  HTTP_PROXY: 'http://185.46.212.88:80'
-  HTTPS_PROXY: 'http://185.46.212.88:80'
-  NO_PROXY: 'localhost,127.0.0.1'  # Optional: Bypass proxy for local addresses
+  #HTTP_PROXY: 'http://185.46.212.88:80'
+  #HTTPS_PROXY: 'http://185.46.212.88:80'
+  #NO_PROXY: 'localhost,127.0.0.1'  # Optional: Bypass proxy for local addresses
 
 stages:
 # ======================= Build & Deploy ========================
