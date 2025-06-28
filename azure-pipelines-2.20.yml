@@ -32,7 +32,15 @@ stages:
           inputs:
             targetType: 'inline'
             script: |
-              C:\Windows\System32\inetsrv\appcmd.exe stop apppool /apppool.name:"$(appPoolName)"
+              $result = & 'C:\Windows\System32\inetsrv\appcmd.exe' stop apppool /apppool.name:"$(appPoolName)" 2>&1
+              if ($LASTEXITCODE -ne 0) {
+                if ($result -match "already stopped") {
+                  Write-Host "App pool was already stopped. Proceeding..."
+                } else {
+                  Write-Error "Failed to stop app pool: $result"
+                  exit 1
+                }
+              }
               Start-Sleep -Seconds 60
 
         - task: PowerShell@2
@@ -103,9 +111,7 @@ stages:
               if (Test-Path "$(sourcePath)") {
                 Remove-Item -Recurse -Force "$(sourcePath)\*" -ErrorAction SilentlyContinue
               }
-              # Delete old compressed publish files
               Get-ChildItem "$(publishPath)" -Filter '*.zip' | Where-Object { $_.CreationTime -lt (Get-Date).AddDays(-15) } | Remove-Item -Force
-              # Delete old backups
               Get-ChildItem "$(backupRootPath)" -Filter '*.zip' | Where-Object { $_.CreationTime -lt (Get-Date).AddDays(-15) } | Remove-Item -Force
 
 # ======================= Manual Approval ========================
@@ -143,7 +149,15 @@ stages:
           inputs:
             targetType: 'inline'
             script: |
-              C:\Windows\System32\inetsrv\appcmd.exe stop apppool /apppool.name:"$(appPoolName)"
+              $result = & 'C:\Windows\System32\inetsrv\appcmd.exe' stop apppool /apppool.name:"$(appPoolName)" 2>&1
+              if ($LASTEXITCODE -ne 0) {
+                if ($result -match "already stopped") {
+                  Write-Host "App pool was already stopped. Proceeding..."
+                } else {
+                  Write-Error "Failed to stop app pool: $result"
+                  exit 1
+                }
+              }
               Start-Sleep -Seconds 60
 
         - task: PowerShell@2
