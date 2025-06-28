@@ -15,7 +15,7 @@ variables:
   deployPath: 'E:\DeployedProjects\CICDTest'
   backupRootPath: 'E:\Deployment\Backup\CICDTest'
   buildConfiguration: 'Release'
-  action: 'deploy'
+  action: 'deploy'  # Default action if not specified
 
 stages:
 - stage: BuildStage
@@ -43,8 +43,8 @@ stages:
           dotnet build --configuration $(buildConfiguration) --no-restore
 
     - task: PowerShell@2
-      name: PublishAndPackage
       displayName: 'Publish and Package'
+      name: 'PublishPackage'  # Named step for output reference
       inputs:
         targetType: 'inline'
         script: |
@@ -70,12 +70,22 @@ stages:
   displayName: Deploy Only
   dependsOn: BuildStage
   condition: or(eq(variables['action'], 'deploy'), eq(variables['Build.DeployAction'], 'deploy'))
-  variables:
-    publishZipPath: $[ stageDependencies.BuildStage.BuildJob.outputs['PublishAndPackage.publishZipPath'] ]
   jobs:
   - job: DeployJob
     displayName: Deploy to IIS
+    variables:
+      publishZipPath: $[ stageDependencies.BuildStage.BuildJob.outputs['PublishPackage.publishZipPath'] ]
     steps:
+    - task: PowerShell@2
+      displayName: 'Validate Build Artifact'
+      inputs:
+        targetType: 'inline'
+        script: |
+          Write-Host "##[debug]Build artifact path: $(publishZipPath)"
+          if (-not (Test-Path -Path "$(publishZipPath)")) {
+              throw "Build artifact not found at: $(publishZipPath)"
+          }
+
     - task: PowerShell@2
       displayName: 'Stop App Pool (Graceful)'
       inputs:
@@ -112,6 +122,7 @@ stages:
               $backupPath = "$(backupRootPath)\CICDTest_$timestamp.zip"
               try {
                   Compress-Archive -Path "$(deployPath)\*" -DestinationPath $backupPath -Force
+                  Write-Host "##vso[task.setvariable variable=latestBackupPath;isOutput=true]$backupPath"
                   Write-Host "##[section]Backup created at $backupPath"
               }
               catch {
@@ -128,11 +139,6 @@ stages:
       inputs:
         targetType: 'inline'
         script: |
-          Write-Host "##[section]Resolved publishZipPath: $(publishZipPath)"
-          if (-not $(publishZipPath)) {
-              Write-Host "##vso[task.logissue type=error]publishZipPath is empty. Deployment cannot proceed."
-              exit 1
-          }
           Write-Host "##[section]Deploying from $(publishZipPath) to $(deployPath)"
           Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
           Expand-Archive -Path "$(publishZipPath)" -DestinationPath "$(deployPath)" -Force
@@ -171,7 +177,6 @@ stages:
     displayName: Execute Rollback
     steps:
     - task: PowerShell@2
-      name: FindBackup
       displayName: 'Find Latest Backup'
       inputs:
         targetType: 'inline'
@@ -184,7 +189,7 @@ stages:
               Write-Host "##vso[task.logissue type=error]No backup files found in $(backupRootPath)"
               exit 1
           }
-          Write-Host "##vso[task.setvariable variable=latestBackupPath;isOutput=true]$($latestBackup.FullName)"
+          Write-Host "##vso[task.setvariable variable=latestBackupPath]$($latestBackup.FullName)"
           Write-Host "##[section]Latest backup found: $($latestBackup.FullName)"
           Write-Host "##[section]Backup created on: $($latestBackup.CreationTime)"
 
