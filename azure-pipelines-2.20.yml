@@ -14,10 +14,6 @@ variables:
   deployPath: 'E:\DeployedProjects\CICDTest'
   backupRootPath: 'E:\Deployments\backup\CICDTest'
   buildConfiguration: 'Release'
-      # 👇 Add these proxy variables (HTTP and HTTPS)
-  #HTTP_PROXY: 'http://185.46.212.88:80'
-  #HTTPS_PROXY: 'http://185.46.212.88:80'
-  #NO_PROXY: 'localhost,127.0.0.1'  # Optional: Bypass proxy for local addresses
 
 stages:
 # ======================= Build & Deploy ========================
@@ -31,23 +27,40 @@ stages:
           clean: true
 
         - task: PowerShell@2
-          displayName: 'Stop App Pool'
+          displayName: 'Stop App Pool (Graceful + Wait 60s)'
           inputs:
             targetType: 'inline'
             script: |
-              C:\Windows\System32\inetsrv\appcmd.exe stop apppool /apppool.name:"$(appPoolName)"
+              try {
+                $appPool = Get-WebAppPoolState -Name "$(appPoolName)"
+                if ($appPool.Value -eq "Stopped") {
+                  Write-Host "Application pool '$(appPoolName)' is already stopped."
+                } else {
+                  C:\Windows\System32\inetsrv\appcmd.exe stop apppool /apppool.name:"$(appPoolName)"
+                  Write-Host "Application pool '$(appPoolName)' stopped successfully."
+                }
+              } catch {
+                Write-Warning "Could not check or stop App Pool '$(appPoolName)': $_"
+              }
+              Write-Host "Waiting 60 seconds to ensure app pool is fully stopped..."
+              Start-Sleep -Seconds 60
 
         - task: PowerShell@2
-          displayName: 'Backup Current Deployment'
+          displayName: 'Backup Current Deployment as ZIP'
           inputs:
             targetType: 'inline'
             script: |
               if (Test-Path "$(deployPath)") {
                 $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
-                $backupPath = "$(backupRootPath)\$timestamp"
-                New-Item -ItemType Directory -Path $backupPath -Force | Out-Null
-                Copy-Item -Recurse -Force "$(deployPath)\*" "$backupPath"
-                Write-Host "##vso[task.setvariable variable=latestBackupPath]$backupPath"
+                $backupFile = "$(backupRootPath)\backup_$timestamp.zip"
+                if (!(Test-Path "$(backupRootPath)")) {
+                  New-Item -ItemType Directory -Path "$(backupRootPath)" -Force | Out-Null
+                }
+                Compress-Archive -Path "$(deployPath)\*" -DestinationPath $backupFile -Force
+                Write-Host "##vso[task.setvariable variable=latestBackupFile]$backupFile"
+                Write-Host "Backup saved as: $backupFile"
+              } else {
+                Write-Host "No deployment found at $(deployPath); skipping backup."
               }
 
         - task: PowerShell@2
@@ -95,32 +108,43 @@ stages:
 - stage: RollbackStage
   displayName: Rollback Deployment
   dependsOn: DeployStage
-  condition: failed()  # Only runs if previous stage fails
+  condition: failed()
   jobs:
     - job: RollbackJob
       displayName: Rollback to Previous Version
       steps:
         - task: PowerShell@2
-          displayName: 'Stop App Pool'
+          displayName: 'Stop App Pool (Graceful + Wait 60s - Rollback)'
           inputs:
             targetType: 'inline'
             script: |
-              C:\Windows\System32\inetsrv\appcmd.exe stop apppool /apppool.name:"$(appPoolName)"
+              try {
+                $appPool = Get-WebAppPoolState -Name "$(appPoolName)"
+                if ($appPool.Value -eq "Stopped") {
+                  Write-Host "Application pool '$(appPoolName)' is already stopped."
+                } else {
+                  C:\Windows\System32\inetsrv\appcmd.exe stop apppool /apppool.name:"$(appPoolName)"
+                  Write-Host "Application pool '$(appPoolName)' stopped successfully."
+                }
+              } catch {
+                Write-Warning "Could not check or stop App Pool '$(appPoolName)': $_"
+              }
+              Write-Host "Waiting 60 seconds to ensure app pool is fully stopped..."
+              Start-Sleep -Seconds 60
 
         - task: PowerShell@2
-          displayName: 'Restore Backup'
+          displayName: 'Restore Latest Backup ZIP'
           inputs:
             targetType: 'inline'
             script: |
-              $backupPath = "$(latestBackupPath)"
-              if (-not $backupPath) {
-                Write-Error "Backup path variable not set. Cannot rollback!"
-              }
-              if (Test-Path $backupPath) {
-                Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
-                Copy-Item -Recurse -Force "$backupPath\*" "$(deployPath)\"
+              $backupRoot = "$(backupRootPath)"
+              $latestZip = Get-ChildItem -Path $backupRoot -Filter "backup_*.zip" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+              if (-not $latestZip) {
+                Write-Error "No backup ZIP files found in $backupRoot. Cannot rollback!"
               } else {
-                Write-Error "Backup folder not found. Cannot rollback!"
+                Write-Host "Restoring from backup file: $($latestZip.FullName)"
+                Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
+                Expand-Archive -Path $latestZip.FullName -DestinationPath "$(deployPath)" -Force
               }
 
         - task: PowerShell@2
