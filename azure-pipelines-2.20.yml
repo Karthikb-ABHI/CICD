@@ -136,10 +136,7 @@ stages:
 - stage: RollbackStage
   displayName: Rollback Deployment
   dependsOn: ApprovalStage
-  condition: or(
-    eq(dependencies.ApprovalStage.jobs.WaitForApproval.result, 'Rejected'),
-    eq(dependencies.ApprovalStage.jobs.WaitForApproval.result, 'TimedOut')
-    )
+  condition: or(eq(dependencies.ApprovalStage.jobs.WaitForApproval.result, 'Rejected'), eq(dependencies.ApprovalStage.jobs.WaitForApproval.result, 'TimedOut'))
   jobs:
     - job: RollbackJob
       displayName: Rollback to Previous Version
@@ -159,6 +156,7 @@ stages:
                 }
               }
               Start-Sleep -Seconds 60
+
 
         - task: PowerShell@2
           displayName: 'Restore Backup'
