@@ -11,6 +11,7 @@ pool:
 variables:
   appPoolName: 'CICDTest'
   sourcePath: 'E:\Temp\CICDTest_Temp'
+  publishPath: 'E:\Deployment\CICDTest'
   deployPath: 'E:\DeployedProjects\CICDTest'
   backupRootPath: 'E:\Deployments\backup\CICDTest'
   buildConfiguration: 'Release'
@@ -61,19 +62,26 @@ stages:
               dotnet build --configuration $(buildConfiguration) --no-restore
 
         - task: PowerShell@2
-          displayName: 'Publish Project'
+          displayName: 'Publish and Compress Artifact'
           inputs:
             targetType: 'inline'
             script: |
               dotnet publish --configuration $(buildConfiguration) --output "$(sourcePath)"
+              $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
+              if (-not (Test-Path "$(publishPath)")) {
+                New-Item -Path "$(publishPath)" -ItemType Directory -Force | Out-Null
+              }
+              $zipPath = "$(publishPath)\CICDTest_Publish_$timestamp.zip"
+              Compress-Archive -Path "$(sourcePath)\*" -DestinationPath $zipPath -Force
+              Write-Host "##vso[task.setvariable variable=publishZipPath]$zipPath"
 
         - task: PowerShell@2
-          displayName: 'Deploy to IIS Folder'
+          displayName: 'Deploy to IIS Folder from Compressed Artifact'
           inputs:
             targetType: 'inline'
             script: |
               Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
-              Copy-Item -Path "$(sourcePath)\*" -Destination "$(deployPath)\" -Recurse -Force
+              Expand-Archive -Path "$(publishZipPath)" -DestinationPath "$(deployPath)" -Force
 
         - task: PowerShell@2
           displayName: 'Start App Pool + Verify'
@@ -87,6 +95,19 @@ stages:
                 Write-Error "App Pool failed to start"
               }
 
+        - task: PowerShell@2
+          displayName: 'Clean Temp Files + Old Archives'
+          inputs:
+            targetType: 'inline'
+            script: |
+              if (Test-Path "$(sourcePath)") {
+                Remove-Item -Recurse -Force "$(sourcePath)\*" -ErrorAction SilentlyContinue
+              }
+              # Delete old compressed publish files
+              Get-ChildItem "$(publishPath)" -Filter '*.zip' | Where-Object { $_.CreationTime -lt (Get-Date).AddDays(-15) } | Remove-Item -Force
+              # Delete old backups
+              Get-ChildItem "$(backupRootPath)" -Filter '*.zip' | Where-Object { $_.CreationTime -lt (Get-Date).AddDays(-15) } | Remove-Item -Force
+
 # ======================= Manual Approval ========================
 - stage: ApprovalStage
   displayName: Manual Sanity Check Approval
@@ -97,25 +118,22 @@ stages:
       pool: server
       steps:
         - task: ManualValidation@0
-          timeoutInMinutes: 180  # Timeout if no response in 180 minutes
+          timeoutInMinutes: 60
           inputs:
             notifyUsers: |
-              karthik.4-v@adityabirlacapital.com
-              
+              karthik@xxxy.com
+              Raj@xxxy.com
             instructions: 'Please validate deployment sanity and approve or reject.'
-            onTimeout: 'approve'
+            onTimeout: 'reject'
 
 # ======================= Rollback ========================
 - stage: RollbackStage
   displayName: Rollback Deployment
   dependsOn: ApprovalStage
-  condition: |
-    or(
-      eq(dependencies.ApprovalStage.jobs.WaitForApproval.result, 'Rejected'),
-      eq(dependencies.ApprovalStage.jobs.WaitForApproval.result, 'TimedOut')
+  condition: or(
+    eq(dependencies.ApprovalStage.jobs.WaitForApproval.result, 'Rejected'),
+    eq(dependencies.ApprovalStage.jobs.WaitForApproval.result, 'TimedOut')
     )
-
-
   jobs:
     - job: RollbackJob
       displayName: Rollback to Previous Version
@@ -154,4 +172,11 @@ stages:
               $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
               if ($status -ne "Started") {
                 Write-Error "App Pool failed to start after rollback"
-              }
+
+        - task: PowerShell@2
+          displayName: 'Clean Old Archives'
+          inputs:
+            targetType: 'inline'
+            script: |
+              Get-ChildItem "$(publishPath)" -Filter '*.zip' | Where-Object { $_.CreationTime -lt (Get-Date).AddDays(-15) } | Remove-Item -Force
+              Get-ChildItem "$(backupRootPath)" -Filter '*.zip' | Where-Object { $_.CreationTime -lt (Get-Date).AddDays(-15) } | Remove-Item -Force
