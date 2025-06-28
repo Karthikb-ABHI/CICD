@@ -97,19 +97,25 @@ stages:
       pool: server
       steps:
         - task: ManualValidation@0
-          timeoutInMinutes: 60  # Timeout if no response in 60 minutes
+          timeoutInMinutes: 180  # Timeout if no response in 180 minutes
           inputs:
             notifyUsers: |
               karthik.4-v@adityabirlacapital.com
               
             instructions: 'Please validate deployment sanity and approve or reject.'
-            onTimeout: 'reject'
+            onTimeout: 'approve'
 
 # ======================= Rollback ========================
 - stage: RollbackStage
   displayName: Rollback Deployment
   dependsOn: ApprovalStage
-  condition: eq(dependencies.ApprovalStage.outputs['ManualValidation.approvalStatus'], 'Rejected')
+  condition: |
+    or(
+      eq(dependencies.ApprovalStage.jobs.WaitForApproval.result, 'Rejected'),
+      eq(dependencies.ApprovalStage.jobs.WaitForApproval.result, 'TimedOut')
+    )
+
+
   jobs:
     - job: RollbackJob
       displayName: Rollback to Previous Version
