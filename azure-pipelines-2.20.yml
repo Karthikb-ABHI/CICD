@@ -13,7 +13,7 @@ variables:
   sourcePath: 'E:\Temp\CICDTest_Temp'
   publishPath: 'E:\Deployment\CICDTest'
   deployPath: 'E:\DeployedProjects\CICDTest'
-  backupRootPath: 'E:\Deployments\backup\CICDTest'
+  backupRootPath: 'E:\Deployment\Backup\CICDTest'
   buildConfiguration: 'Release'
 
 stages:
