@@ -12,7 +12,7 @@ variables:
   deployPath: 'E:\DeployedProjects\CICDTest'
   backupRootPath: 'E:\Deployments\backup\CICDTest'
   buildConfiguration: 'Release'
-  proxyAddress: '185.46.212.88:80'
+  proxyAddress: 'http://185.46.212.88:80'  # Added http:// prefix here
   NO_PROXY: 'localhost,127.0.0.1'
 
 pool:
@@ -39,7 +39,13 @@ stages:
               # Get credentials from environment variables
               $proxyUser = "$env:PROXY_USERNAME"
               $proxyPass = "$env:PROXY_PASSWORD"
-              $proxyUrl = "http://${proxyUser}:${proxyPass}@$env:PROXY_ADDRESS"
+              $proxyHost = "$env:PROXY_ADDRESS"
+              
+              # Construct properly formatted proxy URL
+              $proxyUrl = "$proxyHost".Replace("http://", "")  # Remove existing http:// if present
+              $proxyUrl = "http://${proxyUser}:${proxyPass}@${proxyUrl}"
+              
+              Write-Host "Using proxy URL: http://${proxyUser}:***@${proxyHost.Replace('http://', '')}"
               
               # Configure system proxy
               [System.Net.WebRequest]::DefaultWebProxy = New-Object System.Net.WebProxy($proxyUrl)
@@ -59,6 +65,9 @@ stages:
             PROXY_PASSWORD: $(proxyPassword)  # Set as secret variable
             PROXY_ADDRESS: $(proxyAddress)
             NO_PROXY: $(NO_PROXY)
+
+        # [REST OF YOUR PIPELINE STEPS REMAIN EXACTLY THE SAME AS IN PREVIOUS SOLUTION]
+        # Include all other steps exactly as shown in the previous complete YAML
 
         - task: PowerShell@2
           displayName: 'Stop App Pool'
