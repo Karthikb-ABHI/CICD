@@ -182,8 +182,7 @@ stages:
       timeoutInMinutes: 60
       inputs:
         notifyUsers: |
-          karthik@xxxy.com
-          Raj@xxxy.com
+          karthik.4-v@adityabirlacapital.com
         instructions: 'Please validate deployment and approve/reject'
         onTimeout: 'reject'
 
@@ -196,20 +195,28 @@ stages:
     displayName: Execute Rollback
     steps:
     - task: PowerShell@2
-      displayName: 'Stop App Pool'
+      displayName: 'Stop App Pool (Graceful)'
       inputs:
         targetType: 'inline'
         script: |
           try {
-              & "C:\Windows\System32\inetsrv\appcmd" stop apppool "/apppool.name:$(appPoolName)"
-              Start-Sleep -Seconds 10
-              $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
-              if ($status -ne "Stopped") {
-                  throw "App pool failed to stop"
+              $status = (Get-WebAppPoolState -Name "$(appPoolName)" -ErrorAction Stop).Value
+              if ($status -eq "Stopped") {
+                  Write-Host "##[section]App pool already stopped. Proceeding."
+              } 
+              else {
+                  Write-Host "##[section]Stopping app pool..."
+                  & "C:\Windows\System32\inetsrv\appcmd" stop apppool "/apppool.name:$(appPoolName)"
+                  Start-Sleep -Seconds 10
+                  $statusAfter = (Get-WebAppPoolState -Name "$(appPoolName)").Value
+                  if ($statusAfter -ne "Stopped") {
+                      throw "App pool failed to stop after stop command."
+                  }
+                  Write-Host "##[section]App pool successfully stopped."
               }
           }
           catch {
-              Write-Host "##vso[task.logissue type=error]Stop App Pool failed: $_"
+              Write-Host "##vso[task.logissue type=error]Failed to stop app pool: $_"
               exit 1
           }
 
