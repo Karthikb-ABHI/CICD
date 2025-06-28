@@ -158,7 +158,8 @@ stages:
 - stage: RollbackStage
   displayName: Rollback
   dependsOn: WaitForApprovalStage
-  condition: or(eq(dependencies.WaitForApprovalStage.jobs.WaitJob.result, 'Rejected'), eq('${{ parameters.BuildDeployAction }}', 'rollback'))
+  condition: "or(eq(dependencies.WaitForApprovalStage.jobs.WaitJob.result, 'rejected'), eq('${{ parameters.BuildDeployAction }}', 'rollback'))"
+
   jobs:
   - job: RollbackJob
     displayName: Execute Rollback
