@@ -1,0 +1,132 @@
+name: Build and Deploy .NET 8 App to Azure VM
+
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  name: Default  # Use your self-hosted agent pool
+
+variables:
+  appPoolName: 'healthinsurance'
+  sourcePath: 'E:\Temp\CICDTest_Temp'
+  deployPath: 'E:\DeployedProjects\CICDTest'
+  backupRootPath: 'E:\Deployments\backup\CICDTest'
+  buildConfiguration: 'Release'
+
+stages:
+# ======================= Build & Deploy ========================
+- stage: DeployStage
+  displayName: Build and Deploy
+  jobs:
+    - job: BuildAndDeploy
+      displayName: Build & Deploy to IIS
+      steps:
+        - checkout: self
+          clean: true
+
+        - task: PowerShell@2
+          displayName: 'Stop App Pool'
+          inputs:
+            targetType: 'inline'
+            script: |
+              %SYSTEMROOT%\System32\inetsrv\appcmd stop apppool /apppool.name:"$(appPoolName)"
+
+        - task: PowerShell@2
+          displayName: 'Backup Current Deployment'
+          inputs:
+            targetType: 'inline'
+            script: |
+              if (Test-Path "$(deployPath)") {
+                $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
+                $backupPath = "$(backupRootPath)\$timestamp"
+                New-Item -ItemType Directory -Path $backupPath -Force | Out-Null
+                Copy-Item -Recurse -Force "$(deployPath)\*" "$backupPath"
+                Write-Host "##vso[task.setvariable variable=latestBackupPath]$backupPath"
+              }
+
+        - task: PowerShell@2
+          displayName: 'Restore Dependencies'
+          inputs:
+            targetType: 'inline'
+            script: |
+              dotnet restore
+
+        - task: PowerShell@2
+          displayName: 'Build Project'
+          inputs:
+            targetType: 'inline'
+            script: |
+              dotnet build --configuration $(buildConfiguration) --no-restore
+
+        - task: PowerShell@2
+          displayName: 'Publish Project'
+          inputs:
+            targetType: 'inline'
+            script: |
+              dotnet publish --configuration $(buildConfiguration) --output "$(sourcePath)"
+
+        - task: PowerShell@2
+          displayName: 'Deploy to IIS Folder'
+          inputs:
+            targetType: 'inline'
+            script: |
+              Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
+              Copy-Item -Path "$(sourcePath)\*" -Destination "$(deployPath)\" -Recurse -Force
+
+        - task: PowerShell@2
+          displayName: 'Start App Pool + Verify'
+          inputs:
+            targetType: 'inline'
+            script: |
+              %SYSTEMROOT%\System32\inetsrv\appcmd start apppool /apppool.name:"$(appPoolName)"
+              Start-Sleep -Seconds 10
+              $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
+              if ($status -ne "Started") {
+                Write-Error "App Pool failed to start"
+              }
+
+# ======================= Rollback ========================
+- stage: RollbackStage
+  displayName: Rollback Deployment
+  dependsOn: DeployStage
+  condition: failed()  # Only runs if previous stage fails
+  jobs:
+    - job: RollbackJob
+      displayName: Rollback to Previous Version
+      steps:
+        - task: PowerShell@2
+          displayName: 'Stop App Pool'
+          inputs:
+            targetType: 'inline'
+            script: |
+              %SYSTEMROOT%\System32\inetsrv\appcmd stop apppool /apppool.name:"$(appPoolName)"
+
+        - task: PowerShell@2
+          displayName: 'Restore Backup'
+          inputs:
+            targetType: 'inline'
+            script: |
+              $backupPath = "$(latestBackupPath)"
+              if (-not $backupPath) {
+                Write-Error "Backup path variable not set. Cannot rollback!"
+              }
+              if (Test-Path $backupPath) {
+                Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
+                Copy-Item -Recurse -Force "$backupPath\*" "$(deployPath)\"
+              } else {
+                Write-Error "Backup folder not found. Cannot rollback!"
+              }
+
+        - task: PowerShell@2
+          displayName: 'Start App Pool After Rollback'
+          inputs:
+            targetType: 'inline'
+            script: |
+              %SYSTEMROOT%\System32\inetsrv\appcmd start apppool /apppool.name:"$(appPoolName)"
+              Start-Sleep -Seconds 10
+              $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
+              if ($status -ne "Started") {
+                Write-Error "App Pool failed to start after rollback"
+              }
