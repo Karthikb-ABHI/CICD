@@ -1,19 +1,24 @@
 name: MTPREE-2.20
+
 trigger:
   branches:
     include:
     - main
+
 pool:
   name: MTPre
+
 parameters:
 - name: action
-  displayName: 'Select action (build, deploy, rollback)'
+  displayName: 'Select action (build, deploy, builddeploy, rollback)'
   type: string
-  default: 'build'
+  default: 'builddeploy'
   values:
   - build
   - deploy
+  - builddeploy
   - rollback
+
 variables:
 - name: appPoolName
   value: 'CICDTest'
@@ -27,33 +32,37 @@ variables:
   value: 'E:\Deployment\Backup\CICDTest'
 - name: buildConfiguration
   value: 'Release'
+
 stages:
+
+# BUILD STAGE
 - stage: BuildStage
-  displayName: Build Only
-  condition: eq('deploy', 'build')
+  displayName: Build
+  condition: or(eq('${{ parameters.action }}', 'build'), eq('${{ parameters.action }}', 'builddeploy'))
   jobs:
   - job: BuildJob
     displayName: Build Package
     steps:
-    - task: 6d15af64-176c-496d-b583-fd2ae21d4df4@1
-      inputs:
-        repository: self
-        clean: true
+    - checkout: self
+      clean: true
+
     - task: PowerShell@2
       displayName: 'Restore Dependencies'
       inputs:
         targetType: 'inline'
         script: |
           dotnet restore
+
     - task: PowerShell@2
       displayName: 'Build Project'
       inputs:
         targetType: 'inline'
         script: |
           dotnet build --configuration $(buildConfiguration) --no-restore
+
     - task: PowerShell@2
       displayName: 'Publish and Package'
-      name: 'PublishPackage'
+      name: PublishPackage
       inputs:
         targetType: 'inline'
         script: |
@@ -64,6 +73,7 @@ stages:
           Compress-Archive -Path "$(sourcePath)\*" -DestinationPath $zipPath -Force
           Write-Host "##vso[task.setvariable variable=publishZipPath;isOutput=true]$zipPath"
           Write-Host "##[section]Build package created at $zipPath"
+
     - task: PowerShell@2
       displayName: 'Cleanup Temp Files'
       inputs:
@@ -73,16 +83,21 @@ stages:
               Remove-Item -Recurse -Force "$(sourcePath)\*" -ErrorAction SilentlyContinue
               Write-Host "##[section]Cleaned up temp files"
           }
+
+# DEPLOY STAGE
 - stage: DeployStage
-  displayName: Deploy Only
-  condition: eq('deploy', 'deploy')
-  dependsOn: []
+  displayName: Deploy
+  dependsOn: BuildStage
+  condition: or(eq('${{ parameters.action }}', 'deploy'), eq('${{ parameters.action }}', 'builddeploy'))
   jobs:
   - job: DeployJob
     displayName: Deploy to IIS
+    variables:
+      publishZipPath: $[ stageDependencies.BuildStage.BuildJob.outputs['PublishPackage.publishZipPath'] ]
     steps:
     - task: PowerShell@2
-      displayName: 'Select Latest Build Artifact'
+      displayName: 'Select Latest Build Artifact (if no build)'
+      condition: eq('${{ parameters.action }}', 'deploy')
       inputs:
         targetType: 'inline'
         script: |
@@ -92,29 +107,23 @@ stages:
           }
           Write-Host "##vso[task.setvariable variable=publishZipPath]$($latest.FullName)"
           Write-Host "##[section]Selected build artifact: $($latest.FullName)"
+
     - task: PowerShell@2
-      displayName: 'Stop App Pool (Graceful)'
+      displayName: 'Stop App Pool'
       inputs:
         targetType: 'inline'
         script: |
           try {
-              $status = (Get-WebAppPoolState -Name "$(appPoolName)" -ErrorAction Stop).Value
-              if ($status -eq "Stopped") {
-                  Write-Host "##[section]App pool already stopped. Proceeding."
-              } else {
-                  Write-Host "##[section]Stopping app pool..."
+              $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
+              if ($status -ne "Stopped") {
                   & "C:\Windows\System32\inetsrv\appcmd" stop apppool "/apppool.name:$(appPoolName)"
                   Start-Sleep -Seconds 10
-                  $statusAfter = (Get-WebAppPoolState -Name "$(appPoolName)").Value
-                  if ($statusAfter -ne "Stopped") {
-                      throw "App pool failed to stop after stop command."
-                  }
-                  Write-Host "##[section]App pool successfully stopped."
               }
           } catch {
               Write-Host "##vso[task.logissue type=error]Failed to stop app pool: $_"
               exit 1
           }
+
     - task: PowerShell@2
       displayName: 'Backup Current Deployment'
       inputs:
@@ -128,15 +137,16 @@ stages:
           } else {
               Write-Host "##[section]No existing deployment found, skipping backup"
           }
+
     - task: PowerShell@2
-      displayName: 'Deploy to IIS'
+      displayName: 'Deploy Files'
       inputs:
         targetType: 'inline'
         script: |
-          Write-Host "##[section]Deploying from $(publishZipPath) to $(deployPath)"
           Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
           Expand-Archive -Path "$(publishZipPath)" -DestinationPath "$(deployPath)" -Force
-          Write-Host "##[section]Deployment completed successfully"
+          Write-Host "##[section]Deployment completed"
+
     - task: PowerShell@2
       displayName: 'Start App Pool'
       inputs:
@@ -150,9 +160,11 @@ stages:
               exit 1
           }
           Write-Host "##[section]App pool started successfully"
+
+# ROLLBACK STAGE
 - stage: RollbackStage
-  displayName: Rollback Only
-  condition: eq('deploy', 'rollback')
+  displayName: Rollback
+  condition: eq('${{ parameters.action }}', 'rollback')
   dependsOn: []
   jobs:
   - job: RollbackJob
@@ -169,6 +181,7 @@ stages:
           }
           Write-Host "##vso[task.setvariable variable=latestBackupPath]$($latestBackup.FullName)"
           Write-Host "##[section]Latest backup: $($latestBackup.FullName)"
+
     - task: PowerShell@2
       displayName: 'Stop App Pool'
       inputs:
@@ -176,21 +189,15 @@ stages:
         script: |
           try {
               $status = (Get-WebAppPoolState -Name "$(appPoolName)").Value
-              if ($status -eq "Stopped") {
-                  Write-Host "##[section]App pool already stopped"
-              } else {
+              if ($status -ne "Stopped") {
                   & "C:\Windows\System32\inetsrv\appcmd" stop apppool "/apppool.name:$(appPoolName)"
                   Start-Sleep -Seconds 10
-                  $statusAfter = (Get-WebAppPoolState -Name "$(appPoolName)").Value
-                  if ($statusAfter -ne "Stopped") {
-                      throw "App pool failed to stop"
-                  }
-                  Write-Host "##[section]App pool stopped"
               }
           } catch {
               Write-Host "##vso[task.logissue type=error]Failed to stop app pool: $_"
               exit 1
           }
+
     - task: PowerShell@2
       displayName: 'Restore Backup'
       inputs:
@@ -198,7 +205,8 @@ stages:
         script: |
           Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
           Expand-Archive -Path "$(latestBackupPath)" -DestinationPath "$(deployPath)" -Force
-          Write-Host "##[section]Rollback completed successfully"
+          Write-Host "##[section]Rollback completed"
+
     - task: PowerShell@2
       displayName: 'Start App Pool'
       inputs:
