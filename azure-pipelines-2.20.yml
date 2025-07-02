@@ -21,7 +21,7 @@ variables:
 - name: appPoolName
   value: 'CICDTest'
 - name: sourcePath
-  value: 'E:\Temp'
+  value: 'E:\Temp\CICDTest_Temp'
 - name: publishPath
   value: 'E:\Deployment\CICDTest'
 - name: deployPath
