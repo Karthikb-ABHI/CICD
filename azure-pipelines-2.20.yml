@@ -1,9 +1,9 @@
-name: MTPREE-2.20
+name: MTPREE
 
-trigger:
-  branches:
-    include:
-      - main
+#trigger:
+#  branches:
+#    include:
+#      - main
 
 pool:
   name: MTPre
@@ -21,7 +21,7 @@ variables:
 - name: appPoolName
   value: 'CICDTest'
 - name: sourcePath
-  value: 'E:\Temp\CICDTest_Temp'
+  value: 'E:\Temp'
 - name: publishPath
   value: 'E:\Deployment\CICDTest'
 - name: deployPath
@@ -94,6 +94,32 @@ stages:
           Remove-Item -Recurse -Force "$(deployPath)\*" -ErrorAction SilentlyContinue
           Expand-Archive -Path "$(publishZipPath)" -DestinationPath "$(deployPath)" -Force
           Write-Host "##[section]Deployment completed"
+
+    - task: PowerShell@2
+      displayName: 'Restore config files from backup'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $latestBackup = Get-ChildItem "$(backupRootPath)" -Filter '*.zip' | Sort-Object CreationTime -Descending | Select-Object -First 1
+          if ($latestBackup) {
+              $tempExtractPath = "$(sourcePath)\_config_restore"
+              New-Item -ItemType Directory -Path $tempExtractPath -Force | Out-Null
+              Expand-Archive -Path $latestBackup.FullName -DestinationPath $tempExtractPath -Force
+              
+              foreach ($file in @("appsettings.json", "web.config")) {
+                  $src = Join-Path $tempExtractPath $file
+                  if (Test-Path $src) {
+                      Copy-Item $src -Destination "$(deployPath)" -Force
+                      Write-Host "##[section]Restored $file from backup"
+                  } else {
+                      Write-Host "##vso[task.logissue type=warning]$file not found in backup, skipped"
+                  }
+              }
+
+              Remove-Item -Recurse -Force $tempExtractPath
+          } else {
+              Write-Host "##vso[task.logissue type=warning]No backup found to restore config files"
+          }
 
     - task: PowerShell@2
       displayName: 'Start App Pool'
