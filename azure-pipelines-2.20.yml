@@ -49,8 +49,22 @@ stages:
         targetType: 'inline'
         script: |
           dotnet restore
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "##vso[task.logissue type=error]dotnet restore failed"
+              exit 1
+          }
+
           dotnet build --configuration $(buildConfiguration) --no-restore
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "##vso[task.logissue type=error]dotnet build failed"
+              exit 1
+          }
+
           dotnet publish --configuration $(buildConfiguration) --output "$(sourcePath)"
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "##vso[task.logissue type=error]dotnet publish failed"
+              exit 1
+          }
 
     - task: PowerShell@2
       displayName: 'Package Build'
